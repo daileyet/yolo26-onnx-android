@@ -1,0 +1,45 @@
+# ===== Gradle =====
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# ===== Android =====
+# 本机 SDK 路径，不应入库
+local.properties
+# NDK / CMake 中间产物
+.cxx/
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+output-metadata.json
+lint/intermediates/
+lint/generated/
+lint/outputs/
+lint/tmp/
+
+# ===== IDE =====
+.idea/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+.vscode/
+out/
+
+# ===== 系统 / 日志 =====
+.DS_Store
+Thumbs.db
+*.log
+*.hprof
+
+# ===== 说明 =====
+# app/src/main/assets/yolo26_barrier.onnx   —— 构建必需，必须入库
+# app/src/test/resources/val/*.raw          —— 单元测试数据，必须入库
+# .agent/                                   —— todo 与 plan 文档，保留入库
+
+/model
