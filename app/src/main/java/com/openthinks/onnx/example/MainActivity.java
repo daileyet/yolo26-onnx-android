@@ -16,6 +16,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -124,7 +125,18 @@ public class MainActivity extends Activity implements CameraController.FrameList
     @Override
     protected void onDestroy() {
         detecting = false;
+        // 先停推理线程并等它跑完当前这一帧，再关 ORT 会话：
+        // 否则可能出现“会话已 close、推理仍在 run()”的原生崩溃。
         inferenceExecutor.shutdown();
+        try {
+            if (!inferenceExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
+                inferenceExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            inferenceExecutor.shutdownNow();
+        }
+        // release() 内部会与相机线程的帧处理互斥，保证不会在读 Image 时释放原生缓冲
         cameraController.release();
         if (engine != null) {
             engine.close();

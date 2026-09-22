@@ -176,3 +176,64 @@ EOF
 2. 修复后：12 张负样本全部 0 个框；5 张正样本的类别、分数、IoU 与修复前完全一致。
 3. 单元测试：`DetectorPipelineTest.filtersLowConfidenceLargeBoxGuess` 覆盖该规则（大框低分丢弃 / 大框高分保留 /
    小框中分保留 / 阈值边界 0.49 与 0.51），`./gradlew :app:testDebugUnitTest` 共 7 项全部通过。
+
+## 9. 崩溃修复记录（SIGSEGV in camera-capture）
+
+### 9.1 现象
+
+用户设备实测日志（含 `EGL_emulation`，运行在模拟器上）：
+
+```
+Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x7c0541faf034 in tid 2911 (camera-capture), pid 2889
+... 2 秒后 ... CameraController: 采集尺寸 1280x720      <- 相机被重新拉起
+...          HWUI: Davey! duration=8500ms               <- 主线程被卡 8.5 秒
+crash_dump64  pid: 2889, tid: 2911, name: camera-capture
+```
+
+### 9.2 根因
+
+原 `CameraController.stop()` 在**调用线程（UI 线程）**直接 `close()` 掉 session / device / ImageReader，
+而相机线程此时可能正停在 `onImageAvailable` 里读 `Image` 的 plane（YUV 像素是 HAL 的原生内存）
+或正在 `Bitmap.setPixels` 写预览位图。释放原生缓冲与读取并发 → use-after-free → 原生 SIGSEGV。
+日志时间线也吻合：崩溃后 2 秒出现新的 `采集尺寸`，说明紧接着又重新开了相机（切换摄像头/重启预览）。
+
+### 9.3 修复（4 处）
+
+1. `CameraController`：新增 `frameLock` + `tearingDown` 标志。
+   - `onImageAvailable` 全程持锁（acquireLatestImage 捕获 `IllegalStateException`，处理完在锁内 `image.close()`）；
+   - `stop()` 先 `stopRepeating()` + `abortCaptures()` 让 HAL 停止出帧，再在 `frameLock` 内等在处理的帧结束，
+     最后才 `close()` 三个对象，并先摘掉 ImageReader 的监听器。
+2. `CameraFrameView.updateFrame`：不再 `recycle()` 旧位图（硬件加速下 DisplayList 可能仍持有它，
+   由 RenderThread 异步使用），改为替换引用交给 GC；同时校验 `setPixels` 入参尺寸。
+3. `CameraImageConverter.copyPlane`：所有读取先用 `buffer.limit()` 做上界校验，越界位置填 0 并告警；
+   避免个别 HAL 的 plane 布局比理论尺寸小时读到未映射的原生内存。
+4. `MainActivity.onDestroy`：先 `shutdown()` 推理线程并 `awaitTermination(3s)`，再 `release()` 相机，
+   最后 `close()` ORT 会话 —— 防止“会话已关闭、`run()` 仍在执行”。
+
+### 9.4 复测
+
+1. `./gradlew :app:assembleDebug :app:testDebugUnitTest` → BUILD SUCCESSFUL，7 项单测 0 失败。
+2. APK 已确认包含新代码（`classes3.dex` 中可检索到新日志字符串 `rowStride=`，APK 时间戳晚于源码修改时间）。
+3. 模拟器实测（`emulator-5554`，用户实例）：复现动作 = 连续切换摄像头 8 次 + 开启检测 + 检测态下再切换 4 次 +
+   关闭检测，结果：
+   - `logcat -b crash` 中**不含本 App**（0 条），原始的 `camera-capture` SIGSEGV 未再出现；
+   - 新增的两处竞态日志计数均为 0（`丢弃失效帧` 0 次、`处理帧失败` 0 次）；
+   - 截图亮度交替（预览区平均亮度 67.x ↔ 129.x）证明前后摄切换生效、预览为实时画面。
+4. 迟到回调导致的 `IllegalStateException: Image is already closed`（用户实测栈）已定位为
+   「停相机后已排队的回调再次 `acquireLatestImage()`，拿到 `ImageReader.close()` 时被关闭的 `Image`」，
+   处理方式：回调入口判断 `tearingDown || reader != imageReader` 直接丢弃；锁内用 `image.getWidth()` 探测有效性，
+   这类竞态降级为一行 W 日志。
+5. 顺带修掉的两个性能/稳定性问题：
+   - `getRotationDegrees()` 原来每帧调用 binder 的 `getCameraCharacteristics()`（日志可见
+     `Long monitor contention ... for 544ms`，全量 118 次）→ 改为启动时缓存 `[sensorOrientation, LENS_FACING]`；
+   - 移除 `abortCaptures()`，只保留 `stopRepeating()`（`close()` 自身会 flush）。
+
+### 9.5 遗留问题（非本 App 缺陷）
+
+1. 模拟器自带的 camera HAL `android.hardware.camera.provider.ranchu` 在快速反复切换时**自身** SIGABRT
+   （栈：`#03 ... CameraDeviceSession::waitFlushingDone`，实测 2 次）；HAL 崩溃后 App 后续开相机失败
+   （一轮 13 次点击只成功启动 6 次）。属模拟器 HAL 缺陷，App 侧只能靠 `onDisconnected/onError` 报错兜住。
+2. 软件渲染模拟器上长跑后 App 被系统 ANR 强杀（`Waited 5185ms for FocusEvent`，CPU 70%）：
+   原因是预览路径 CPU 开销大（YUV→RGB 720p + 2560x1600 位图缩放绘制），且 `onDraw` 与相机线程共用 `frameLock`。
+   **该优化已明确不做**（2026-09 用户决定），如需提升流畅度可考虑：预览转换降到 640x360、改为 TextureView 双流、
+   或为预览单独加锁。

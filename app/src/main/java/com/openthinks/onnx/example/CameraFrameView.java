@@ -65,11 +65,14 @@ public class CameraFrameView extends View {
 
     /** 相机线程调用：刷新预览帧。 */
     public void updateFrame(int[] argb, int w, int h) {
+        if (argb == null || w <= 0 || h <= 0 || argb.length < w * h) {
+            return;
+        }
         synchronized (frameLock) {
             if (frameBitmap == null || frameW != w || frameH != h) {
-                if (frameBitmap != null) {
-                    frameBitmap.recycle();
-                }
+                // 注意：这里刻意不 recycle() 旧位图。硬件加速下 DisplayList 仍可能持有它，
+                // 由 RenderThread 异步使用；recycle() 会立即释放原生像素内存，导致踩已释放内存的原生崩溃。
+                // 直接替换引用并交给 GC 更安全（尺寸变化只发生在切换摄像头/分辨率变化时）。
                 frameBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
                 frameW = w;
                 frameH = h;

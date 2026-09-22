@@ -89,3 +89,27 @@ SDK `local.properties → sdk.dir=/export02/dad2szh/android/sdk`。
 1. 设备验证方式：用户选择「接受当前验证水平」（构建通过 + 6 项单测含真实模型端到端 IoU 0.92/0.92/0.98），
    Task 1 已标注 `[完成]`；`tools/verify-on-device.sh` 保留，待有设备时可直接执行补做运行验证。
 2. 预览展示方式：保持等比缩放居中（两侧留黑边、不裁切），检测框坐标映射绝对准确。
+
+## 7. 修复记录（SIGSEGV in camera-capture，用户设备实测发现）
+
+1. 现象：`Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR)`，崩溃线程 `camera-capture`（相机 HandlerThread），
+   崩溃后 2 秒出现新的 `采集尺寸 1280x720`（相机被重新拉起），主线程出现 `Davey! duration=8500ms`。
+2. 根因：原 `CameraController.stop()` 在 UI 线程直接 `close(session/device/ImageReader)`，
+   与相机线程正在读取 `Image` 的 plane（HAL 原生内存）/ 写预览位图并发 → use-after-free。
+3. 修复：
+   - `CameraController` 增加 `frameLock` + `tearingDown`：帧处理全程持锁；`stop()` 先 `stopRepeating()/abortCaptures()`，
+     再在锁内等待在处理的帧结束，最后 `close()`（详见 `README.md` 第 9 节）。
+   - `CameraFrameView` 不再 `recycle()` 旧位图（避免 RenderThread 踩已释放像素内存），并校验 `setPixels` 入参。
+   - `CameraImageConverter.copyPlane` 用 `buffer.limit()` 做上界校验，越界填 0 并告警。
+   - `MainActivity.onDestroy` 先停并等待推理线程结束，再释放相机、最后关闭 ORT 会话。
+4. 复测：`./gradlew :app:assembleDebug :app:testDebugUnitTest` 通过（7 项单测 0 失败），APK 已含新代码。
+5. 模拟器运行验证（`emulator-5554`）：连续切换摄像头 8 次 + 检测开关 + 检测态切换 4 次 →
+   App 崩溃缓冲 0 条、无 SIGSEGV、`丢弃失效帧`/`处理帧失败` 均 0 次，预览两路画面亮度交替（切换确实生效）。
+6. 第二轮补充修复（来自用户实测栈与模拟器日志）：
+   - `onImageAvailable` 增加 `tearingDown || reader != imageReader` 判断，并在锁内用 `image.getWidth()` 探测
+     `Image` 有效性 —— 解决迟到回调拿到已被关闭 `Image` 的 `IllegalStateException`；
+   - `getRotationDegrees()` 改为使用缓存的 `[sensorOrientation, LENS_FACING]`（原来每帧 binder 调用
+     `getCameraCharacteristics()`，实测出现 544ms monitor contention）；
+   - 移除 `stop()` 中的 `abortCaptures()`（模拟器 ranchu HAL 崩溃栈位于 `waitFlushingDone`，与这记重锤相关）。
+7. 遗留（非本 App 缺陷，见 `README.md` 第 9.5 节）：模拟器 ranchu camera HAL 反复切换时自身 SIGABRT；
+   软件渲染模拟器上长跑后 App 被 ANR 强杀（预览路径 CPU 开销大，**预览优化已决定不做**）。

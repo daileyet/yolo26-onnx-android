@@ -1,6 +1,7 @@
 package com.openthinks.onnx.example;
 
 import android.media.Image;
+import android.util.Log;
 
 import java.nio.ByteBuffer;
 
@@ -16,6 +17,8 @@ import java.nio.ByteBuffer;
  * 这样预览与检测框天然共用同一坐标系，不会错位。
  */
 public final class CameraImageConverter {
+
+    private static final String TAG = "CameraImageConverter";
 
     private byte[] yPlane;
     private byte[] uPlane;
@@ -108,22 +111,40 @@ public final class CameraImageConverter {
     /**
      * 逐行拷贝平面数据，正确处理 rowStride / pixelStride。
      * YUV_420_888 的 plane rowStride 通常大于宽度（含 padding），U/V 的 pixelStride 可能是 1 或 2。
+     *
+     * 所有读取都先用 buffer.limit() 做上界校验：个别 HAL 给出的 plane 布局可能比理论尺寸小，
+     * 直接用绝对索引读到 limit 之外会踩到未映射的原生内存（原生 SIGSEGV），
+     * 因此越界位置填 0，并只记录一次日志。
      */
     private static void copyPlane(Image.Plane plane, byte[] dst, int w, int h) {
         ByteBuffer buf = plane.getBuffer();
         buf.rewind();
         int rowStride = plane.getRowStride();
         int pixelStride = plane.getPixelStride();
-        if (pixelStride == 1 && rowStride == w) {
-            buf.get(dst, 0, w * h);
+        int limit = buf.limit();
+        int need = w * h;
+        if (pixelStride == 1 && rowStride == w && limit >= need) {
+            buf.get(dst, 0, need);
             return;
         }
         int idx = 0;
+        boolean truncated = false;
         for (int row = 0; row < h; row++) {
             int base = row * rowStride;
             for (int col = 0; col < w; col++) {
-                dst[idx++] = buf.get(base + col * pixelStride);
+                int i = base + col * pixelStride;
+                if (i >= 0 && i < limit) {
+                    dst[idx++] = buf.get(i);
+                } else {
+                    dst[idx++] = 0;
+                    truncated = true;
+                }
             }
+        }
+        if (truncated) {
+            Log.w(TAG, "plane 数据短于理论尺寸，已用 0 填充 (limit=" + limit
+                    + ", rowStride=" + rowStride + ", pixelStride=" + pixelStride
+                    + ", w=" + w + ", h=" + h + ")");
         }
     }
 }
