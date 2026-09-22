@@ -33,7 +33,7 @@
 结论（写进代码的硬约束）：
 
 1. 预处理 = `RGB` + `NCHW` + `float32` + **`/255.0` 归一化** + letterbox 到 `640x640`。
-2. 后处理 = `conf >= 0.25` 过滤 + 按类 NMS(`iou 0.45`)；输出索引布局为 `out[c * 8400 + i]`（`c = 0..3` 为 `cx,cy,w,h`，`c = 4..6` 为三类分数）。
+2. 后处理 = `conf >= 0.5` 过滤 + 按类 NMS(`iou 0.45`) + 大框低分过滤；输出索引布局为 `out[c * 8400 + i]`（`c = 0..3` 为 `cx,cy,w,h`，`c = 4..6` 为三类分数）。
 3. letterbox 与直接拉伸 resize 在 val 图（方形）上结果完全一致，但相机帧是 16:9 非方形，**必须 letterbox**，否则框会纵向偏移。
 4. 框回映射：先去 letterbox（减 pad、除比例），再按预览/显示方向做旋转与镜像。
 
@@ -109,7 +109,7 @@ OrtSession session = env.createSession(model, opts);
    letterbox pad 值统一填 `0`（val 图为方形，letterbox 不产生 pad，因此原始实验无法对比 pad 取值；
    实施中通过单元测试标定 pad 区域取值与几何关系，见 `task1-impl-plan.md` 第 3 节）。
 2. 推理：`session.run(Collections.singletonMap("images", tensor))`，输入名从 `session.getInputNames()` 取，不硬编码。
-3. 输出解析：`(float[][][]) results.get(0).getValue()` → `[1][7][8400]`；遍历 `i in 0..8399`，取 `cls = argmax(score[4..6])`，`conf = max`，`conf < 0.25` 直接跳过。
+3. 输出解析：`(float[][][]) results.get(0).getValue()` → `[1][7][8400]`；遍历 `i in 0..8399`，取 `cls = argmax(score[4..6])`，`conf = max`，`conf < 0.5` 直接跳过（阈值取值依据见 `task2-model-capability-analysis.md` 第 8 节）。
 4. NMS：按类别分组做 IoU 抑制（且置信度降序），IoU 阈值 0.45，`MAX_DETECTIONS` 限制 20 个，避免 UI 线程被大量框拖慢。
 5. 资源：`OnnxTensor`、`OrtSession.Result` 用 try-with-resources 关闭；`OrtSession` 在 Activity `onDestroy` 关闭。
 

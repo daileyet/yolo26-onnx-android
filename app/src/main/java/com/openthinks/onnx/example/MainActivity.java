@@ -35,7 +35,8 @@ public class MainActivity extends Activity implements CameraController.FrameList
         CameraController.StateListener {
 
     private static final int REQ_CAMERA_PERMISSION = 1001;
-    private static final String MODEL_ASSET = "yolo26_barrier.onnx";
+//    private static final String MODEL_ASSET = "yolo26_barrier.onnx";
+    private static final String MODEL_ASSET = "yolo26n.onnx";
 
     private CameraFrameView frameView;
     private TextView statusView;

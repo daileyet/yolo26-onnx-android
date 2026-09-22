@@ -81,7 +81,8 @@ public class DetectorPipelineTest {
                 System.out.println(String.format("  %s cls=%s score=%.2f IoU=%.2f",
                         id, gt.className(), best.score, iou));
                 assertTrue(id + " IoU 过低: " + iou + " (" + best + " vs " + gt + ")", iou > 0.7f);
-                assertTrue(id + " 置信度过低: " + best.score, best.score > 0.5f);
+                assertTrue(id + " 置信度未过默认阈值: " + best.score,
+                        best.score > Detector.DEFAULT_CONF_THRESHOLD);
             }
         }
     }
@@ -140,6 +141,35 @@ public class DetectorPipelineTest {
         assertEquals(100f / 640f, detections.get(0).w, 1e-4f);
         assertEquals(50f / 640f, detections.get(0).h, 1e-4f);
         assertEquals(0, detections.get(1).classId);
+    }
+
+    /** 误报抑制规则：低置信度的大框（“整图猜测”）必须被丢弃，正常框与高分大框必须保留。 */
+    @Test
+    public void filtersLowConfidenceLargeBoxGuess() {
+        // 1) bus.jpg 实测误报模式：整图大框(92%x67%)、分数 0.41 -> 丢弃（低于 conf 阈值）
+        assertEquals(0, detectSingle(0.41f, 589f, 429f).size());
+
+        // 2) 大框(面积约 60%)但分数只有 0.55 -> 丢弃（大框必须 >= 0.7）
+        assertEquals(0, detectSingle(0.55f, 496f, 496f).size());
+
+        // 3) 大框(面积约 60%)且分数 0.90 -> 保留（近景道闸场景）
+        List<Detection> big = detectSingle(0.90f, 496f, 496f);
+        assertEquals(1, big.size());
+        assertEquals(0.9f, big.get(0).score, 1e-5f);
+
+        // 4) 小框(面积约 4%)、分数 0.55 -> 保留（正常大小的目标不受大框规则影响）
+        assertEquals(1, detectSingle(0.55f, 128f, 128f).size());
+
+        // 5) 阈值边界：0.49 < 0.5 丢弃，0.51 保留
+        assertEquals(0, detectSingle(0.49f, 128f, 128f).size());
+        assertEquals(1, detectSingle(0.51f, 128f, 128f).size());
+    }
+
+    /** 构造单目标输出并跑默认 Detector（置信度/框尺寸均在 640 空间）。 */
+    private static List<Detection> detectSingle(float score, float boxW, float boxH) {
+        float[][][] out = new float[1][7][8400];
+        setAnchor(out, 0, 320f, 320f, boxW, boxH, new float[]{0f, 0f, score});
+        return new Detector().detect(out, 1f, 0f, 0f, 640, 640);
     }
 
     /** letterbox 几何与 NCHW / RGB 通道顺序（用纯色像素标定）。 */

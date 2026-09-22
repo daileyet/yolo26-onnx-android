@@ -23,6 +23,22 @@ public final class Detector {
     private static final int NUM_ANCHORS = 8400;
     private static final int NUM_CLASSES = CLASS_NAMES.length;
 
+    /**
+     * 默认置信度阈值。实测依据（12 张通用图片作负样本、5 张 val 图作正样本）：
+     * 正样本命中分数 0.911~0.981；负样本最高分数 0.410（bus.jpg 整图误报）、0.354（室内图误报）。
+     * 取 0.5 可滤掉这两个误报，同时保留 0.41 的余量。
+     */
+    public static final float DEFAULT_CONF_THRESHOLD = 0.5f;
+    public static final float DEFAULT_NMS_IOU_THRESHOLD = 0.45f;
+    public static final int DEFAULT_MAX_DETECTIONS = 20;
+
+    /** 面积占整帧比例达到该值即视为“大框”。正样本最大命中框 49.1%，bus.jpg 误报框 61.7%。 */
+    private static final float BIG_BOX_AREA_RATIO = 0.5f;
+
+    /** 大框必须达到的置信度；否则认定为“整图猜测”并丢弃。正样本 5/5 命中分 >= 0.911，不受影响。 */
+    private static final float BIG_BOX_MIN_SCORE = 0.7f;
+
+
     private static final Comparator<Detection> BY_SCORE_DESC = new Comparator<Detection>() {
         @Override
         public int compare(Detection a, Detection b) {
@@ -35,7 +51,7 @@ public final class Detector {
     private final int maxDetections;
 
     public Detector() {
-        this(0.25f, 0.45f, 20);
+        this(DEFAULT_CONF_THRESHOLD, DEFAULT_NMS_IOU_THRESHOLD, DEFAULT_MAX_DETECTIONS);
     }
 
     public Detector(float confThreshold, float iouThreshold, int maxDetections) {
@@ -74,8 +90,13 @@ public final class Detector {
             float cy = (o[1][i] - padY) / scale;
             float w = o[2][i] / scale;
             float h = o[3][i] / scale;
-            candidates.add(new Detection(bestClass, bestScore,
-                    cx / srcW, cy / srcH, w / srcW, h / srcH));
+            float nw = w / srcW;
+            float nh = h / srcH;
+            // 几何过滤：覆盖大半画面的框必须足够自信，否则视为“整图猜测”丢弃
+            if (nw * nh >= BIG_BOX_AREA_RATIO && bestScore < BIG_BOX_MIN_SCORE) {
+                continue;
+            }
+            candidates.add(new Detection(bestClass, bestScore, cx / srcW, cy / srcH, nw, nh));
         }
         return nms(candidates);
     }

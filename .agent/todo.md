@@ -12,6 +12,10 @@
 
 ---
 
+## Task 2 [完成]
+
+`app\src\main\assets\yolo26_barrier.onnx` 是否支持通用物体检测
+
 ## Task 1 [完成]
 
 在当前目录创建Android Java项目, 用于演示利用手机摄像头实时进行目标检测.
