@@ -139,9 +139,8 @@ public class CameraFrameView extends View {
             if (inferenceMs > 0f) {
                 info += String.format("  推理 %.0fms", inferenceMs);
             }
-            // 右上角绘制，避免与左上角的状态文字重叠
-            float textW = textPaint.measureText(info);
-            canvas.drawText(info, Math.max(24f, getWidth() - textW - 24f), 60f, textPaint);
+            // 左下角绘制：上方留给状态文字与模型下拉框，下方留给按钮栏
+            canvas.drawText(info, 24f, Math.max(80f, getHeight() - 60f), textPaint);
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.openthinks.onnx.example;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -29,60 +30,71 @@ import org.junit.Test;
  *   ARGB 整帧 -> Letterboxer(NCHW, /255) -> ONNX Runtime -> Detector(解码 + NMS) -> 归一化检测框
  *
  * 与真机链路唯一的差异是 YUV_420_888 -> ARGB 这一步（CameraImageConverter 依赖 Android）。
+ * 覆盖两个模型（3 类道闸 + 80 类 COCO），验证「类名随模型变化」这一 Task 3 要求。
  *
  * 测试图片放在 src/test/resources/val/*.raw：格式为 [int width][int height][width*height 个 int ARGB]（大端）。
  * 之所以不用 JPG + ImageIO，是因为 Android 单元测试的编译引导类路径是 android.jar，
- * 其中不含 java.awt / javax.imageio。raw 文件由 datasets/barrier 的 val 图导出（脚本见 README）。
+ * 其中不含 java.awt / javax.imageio。raw 文件导出脚本见 README。
  */
 public class DetectorPipelineTest {
 
     /** 工作目录被 Gradle 设为仓库根目录（见 app/build.gradle）。 */
-    private static final File MODEL = new File("model/yolo26_barrier.onnx");
+    private static final File BARRIER_MODEL = new File("model/yolo26_barrier.onnx");
+    private static final File COCO_MODEL = new File("app/src/main/assets/yolo26n.onnx");
 
     /** img_0001=barrier_closed, img_0004=barrier_raising, img_0008=barrier_open，三个类别各覆盖一张。 */
     private static final String[] VAL_IDS = {"img_0001", "img_0004", "img_0008"};
 
-    private static OnnxInferenceEngine engine;
-    private static FloatBuffer input;
-    private static final Letterboxer letterboxer = new Letterboxer();
-    private static final Detector detector = new Detector();
+    private static OnnxInferenceEngine barrierEngine;
+    private static Detector barrierDetector;
+    private static Letterboxer barrierLetterboxer;
+    private static ModelProfile barrierProfile;
 
     @BeforeClass
-    public static void loadModel() throws Exception {
-        assertTrue("模型文件不存在: " + MODEL.getAbsolutePath(), MODEL.isFile());
-        engine = new OnnxInferenceEngine(Files.readAllBytes(MODEL.toPath()));
-        input = engine.input();
-        assertEquals("images", engine.inputName());
+    public static void loadBarrierModel() throws Exception {
+        assertTrue("模型文件不存在: " + BARRIER_MODEL.getAbsolutePath(), BARRIER_MODEL.isFile());
+        barrierEngine = new OnnxInferenceEngine(Files.readAllBytes(BARRIER_MODEL.toPath()));
+        barrierProfile = profileOf("yolo26_barrier.onnx", barrierEngine);
+        barrierDetector = new Detector(barrierProfile);
+        barrierLetterboxer = new Letterboxer(barrierEngine.inputSize());
+        assertEquals("images", barrierEngine.inputName());
+        assertEquals(3, barrierEngine.numClasses());
+        assertEquals(640, barrierEngine.inputSize());
     }
 
     @AfterClass
-    public static void closeModel() {
-        if (engine != null) {
-            engine.close();
+    public static void closeModels() {
+        if (barrierEngine != null) {
+            barrierEngine.close();
         }
     }
 
-    /** 端到端：val 图检测框必须与标注一致。 */
+    private static ModelProfile profileOf(String assetName, OnnxInferenceEngine engine) {
+        return ModelProfile.of(assetName, engine.numClasses(), engine.numAnchors(), engine.namesMetadata());
+    }
+
+    /** 端到端：道闸 val 图检测框必须与标注一致。 */
     @Test
     public void valImagesDetectionsMatchGroundTruth() throws Exception {
+        assertFalse(barrierProfile.bigBoxFilterEnabled && barrierProfile.confThreshold != 0.5f);
         for (String id : VAL_IDS) {
             Frame frame = loadFrame("/val/" + id + ".raw");
             List<GroundTruth> gts = loadGroundTruth("/val/" + id + ".txt");
             assertTrue(id + " 缺少标注", !gts.isEmpty());
 
-            List<Detection> detections = detect(frame);
+            List<Detection> detections = detect(barrierEngine, barrierLetterboxer, barrierDetector, frame);
             System.out.println(id + " (" + frame.w + "x" + frame.h + ") -> " + detections);
 
             assertTrue(id + " 检测数量异常", detections.size() >= 1 && detections.size() <= 20);
             for (GroundTruth gt : gts) {
                 Detection best = bestMatch(detections, gt);
-                assertNotNull(id + " 未检出 " + gt.className(), best);
-                float iou = Detector.iou(best, gt.asDetection());
+                assertNotNull(id + " 未检出 " + gt.className(barrierProfile.classNames), best);
+                float iou = Detector.iou(best, gt.asDetection(barrierProfile.classNames));
                 System.out.println(String.format("  %s cls=%s score=%.2f IoU=%.2f",
-                        id, gt.className(), best.score, iou));
+                        id, gt.className(barrierProfile.classNames), best.score, iou));
                 assertTrue(id + " IoU 过低: " + iou + " (" + best + " vs " + gt + ")", iou > 0.7f);
                 assertTrue(id + " 置信度未过默认阈值: " + best.score,
-                        best.score > Detector.DEFAULT_CONF_THRESHOLD);
+                        best.score > barrierProfile.confThreshold);
             }
         }
     }
@@ -101,12 +113,12 @@ public class DetectorPipelineTest {
         assertEquals(1, gts.size());
         GroundTruth gt = gts.get(0);
 
-        List<Detection> detections = detect(frame);
+        List<Detection> detections = detect(barrierEngine, barrierLetterboxer, barrierDetector, frame);
         System.out.println("16:9 crop -> " + detections);
         assertTrue("裁剪后未检出", !detections.isEmpty());
 
         // 标注换算到裁剪后坐标系
-        Detection expected = new Detection(gt.classId, 1f, gt.cx,
+        Detection expected = new Detection(gt.classId, gt.className(barrierProfile.classNames), 1f, gt.cx,
                 (gt.cy * full.h - cropTop) / cropH, gt.w, gt.h * full.h / cropH);
 
         float best = 0f;
@@ -117,6 +129,53 @@ public class DetectorPipelineTest {
         }
         System.out.println(String.format("  letterbox IoU=%.2f (期望 > 0.7)", best));
         assertTrue("letterbox 反算错误，IoU=" + best, best > 0.7f);
+    }
+
+    /** 80 类 COCO 模型：类别数/类名/阈值必须来自模型自身，且标签不得再是道闸类（Task 2 发现的错位问题的回归）。 */
+    @Test
+    public void cocoModelUsesCocoClassNames() throws Exception {
+        assertTrue("COCO 模型文件不存在: " + COCO_MODEL.getAbsolutePath(), COCO_MODEL.isFile());
+        try (OnnxInferenceEngine cocoEngine = new OnnxInferenceEngine(Files.readAllBytes(COCO_MODEL.toPath()))) {
+            ModelProfile cocoProfile = profileOf("yolo26n.onnx", cocoEngine);
+            System.out.println("COCO profile: " + cocoProfile);
+
+            // 1) 契约与配置来自模型
+            assertEquals(80, cocoEngine.numClasses());
+            assertEquals(8400, cocoEngine.numAnchors());
+            assertEquals(640, cocoEngine.inputSize());
+            assertEquals("person", cocoProfile.classNames[0]);
+            assertEquals("bicycle", cocoProfile.classNames[1]);
+            assertEquals("traffic light", cocoProfile.classNames[9]);
+            assertEquals("toothbrush", cocoProfile.classNames[79]);
+            assertEquals(0.25f, cocoProfile.confThreshold, 1e-6f);
+            assertFalse("COCO 模型不应启用大框低分规则", cocoProfile.bigBoxFilterEnabled);
+
+            // 2) 通用图上的检测标签必须是 COCO 类名，不能出现 barrier_*
+            Letterboxer letterboxer = new Letterboxer(cocoEngine.inputSize());
+            Detector detector = new Detector(cocoProfile);
+            Frame frame = loadFrame("/val/cc_street.raw");
+            List<Detection> detections = detect(cocoEngine, letterboxer, detector, frame);
+            System.out.println("cc_street (COCO) -> " + detections);
+            assertTrue("通用图上应检出目标", !detections.isEmpty());
+
+            boolean hasPerson = false;
+            for (Detection d : detections) {
+                assertFalse("COCO 模型不应输出道闸类名: " + d, d.className().startsWith("barrier_"));
+                if (d.classId == 0 && d.score > 0.5f) {
+                    hasPerson = true;
+                }
+            }
+            assertTrue("应检出 person 且分数 > 0.5", hasPerson);
+        }
+    }
+
+    /** 反向对照：道闸模型的输出里不可能出现 COCO 类名（证明类名确实跟随模型而不是全局写死）。 */
+    @Test
+    public void barrierModelNeverOutputsCocoNames() throws Exception {
+        Frame frame = loadFrame("/val/cc_street.raw");
+        for (Detection d : detect(barrierEngine, barrierLetterboxer, barrierDetector, frame)) {
+            assertTrue("道闸模型的标签必须是 barrier_*: " + d, d.className().startsWith("barrier_"));
+        }
     }
 
     /** 解码 + 同类 NMS 的确定性用例（不依赖模型）。 */
@@ -132,9 +191,10 @@ public class DetectorPipelineTest {
         // anchor3: 全部低于阈值 -> 丢弃
         setAnchor(out, 3, 100f, 100f, 30f, 30f, new float[]{0.01f, 0.02f, 0.03f});
 
-        List<Detection> detections = detector.detect(out, 1f, 0f, 0f, 640, 640);
+        List<Detection> detections = barrierDetector.detect(out, 1f, 0f, 0f, 640, 640);
         assertEquals(2, detections.size());
         assertEquals(1, detections.get(0).classId);
+        assertEquals("barrier_open", detections.get(0).className());
         assertEquals(0.9f, detections.get(0).score, 1e-5f);
         assertEquals(0.5f, detections.get(0).cx, 1e-4f);
         assertEquals(0.5f, detections.get(0).cy, 1e-4f);
@@ -163,19 +223,27 @@ public class DetectorPipelineTest {
         // 5) 阈值边界：0.49 < 0.5 丢弃，0.51 保留
         assertEquals(0, detectSingle(0.49f, 128f, 128f).size());
         assertEquals(1, detectSingle(0.51f, 128f, 128f).size());
+
+        // 6) 关掉大框规则/降低阈值（模拟通用模型配置）后，同样的输入应被保留
+        Detector cocoLike = new Detector(ModelProfile.custom("x.onnx", 3, 8400,
+                barrierProfile.classNames, 0.25f, 0.45f, 30, false));
+        float[][][] out = new float[1][7][8400];
+        setAnchor(out, 0, 320f, 320f, 589f, 429f, new float[]{0f, 0f, 0.41f});
+        assertEquals(1, cocoLike.detect(out, 1f, 0f, 0f, 640, 640).size());
     }
 
-    /** 构造单目标输出并跑默认 Detector（置信度/框尺寸均在 640 空间）。 */
+    /** 构造单目标输出并跑道闸模型默认 Detector（置信度/框尺寸均在 640 空间）。 */
     private static List<Detection> detectSingle(float score, float boxW, float boxH) {
         float[][][] out = new float[1][7][8400];
         setAnchor(out, 0, 320f, 320f, boxW, boxH, new float[]{0f, 0f, score});
-        return new Detector().detect(out, 1f, 0f, 0f, 640, 640);
+        return barrierDetector.detect(out, 1f, 0f, 0f, 640, 640);
     }
 
     /** letterbox 几何与 NCHW / RGB 通道顺序（用纯色像素标定）。 */
     @Test
     public void letterboxGeometryAndNchwLayout() {
         Letterboxer lb = new Letterboxer();
+        assertEquals(640, lb.getInputSize());
         int srcW = 1280;
         int srcH = 720;
         int[] argb = new int[srcW * srcH];
@@ -223,8 +291,9 @@ public class DetectorPipelineTest {
         }
     }
 
-    private static List<Detection> detect(Frame frame) throws Exception {
-        letterboxer.fill(input, frame.argb, frame.w, frame.h);
+    private static List<Detection> detect(OnnxInferenceEngine engine, Letterboxer letterboxer,
+                                          Detector detector, Frame frame) throws Exception {
+        letterboxer.fill(engine.input(), frame.argb, frame.w, frame.h);
         return detector.detect(engine.run(), letterboxer.getScale(),
                 letterboxer.getPadX(), letterboxer.getPadY(), frame.w, frame.h);
     }
@@ -236,7 +305,7 @@ public class DetectorPipelineTest {
             if (d.classId != gt.classId) {
                 continue;
             }
-            float iou = Detector.iou(d, gt.asDetection());
+            float iou = Detector.iou(d, gt.asDetection(new String[0]));
             if (iou > bestIou) {
                 bestIou = iou;
                 best = d;
@@ -288,17 +357,17 @@ public class DetectorPipelineTest {
             this.h = h;
         }
 
-        String className() {
-            return Detector.CLASS_NAMES[classId];
+        String className(String[] classNames) {
+            return classId < classNames.length ? classNames[classId] : "class_" + classId;
         }
 
-        Detection asDetection() {
-            return new Detection(classId, 1f, cx, cy, w, h);
+        Detection asDetection(String[] classNames) {
+            return new Detection(classId, className(classNames), 1f, cx, cy, w, h);
         }
 
         @Override
         public String toString() {
-            return String.format("%s(%.3f,%.3f %.3fx%.3f)", className(), cx, cy, w, h);
+            return String.format("cls%d(%.3f,%.3f %.3fx%.3f)", classId, cx, cy, w, h);
         }
     }
 

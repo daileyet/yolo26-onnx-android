@@ -12,7 +12,9 @@
 2. 输出 `output0`：`[1, 7, 8400]` = `4 + 3`：
    - 通道 0..3：`cx, cy, w, h`，已是解码后的中心式坐标，位于 640x640 letterbox 空间；
    - 通道 4..6：三个类别分数，图中已含 Sigmoid（**没有 objectness，也没有 DFL，无需额外解码**）。
-3. 类别：`0 barrier_closed`、`1 barrier_open`、`2 barrier_raising`。
+3. 类别名来自**模型自身的 metadata `names`**（随所选模型变化，代码里不再写死）：
+   道闸模型为 `barrier_closed/barrier_open/barrier_raising`（3 类），COCO 模型为 80 类。
+   UI 顶部的模型下拉框可切换模型，切换后类名/类别数/阈值一起跟随（见第 10 节）。
 4. 后处理：`conf >= 0.5` 过滤 + 按类 NMS(`IoU 0.45`)，最多 20 个框，并丢弃“大框 + 低置信度”的整图猜测
    （`Detector` 中的常量，取值依据见第 8 节）。
 5. 非方形输入必须 letterbox（等比缩放 + 居中填充），框需按 `scale / padX / padY` 反算回原帧，
@@ -126,6 +128,16 @@ $ANDROID_SDK_ROOT/emulator/emulator -avd Pixel_Tablet \
 4. `DetectorPipelineTest.letterboxGeometryAndNchwLayout`：用红/绿像素标定 letterbox 几何、NCHW 布局、
    RGB 通道顺序与 pad 区域取值。
 5. `RotationMappingTest`：旋转映射的双射性与 90/180/270 的方向语义。
+6. `ModelProfileTest`：metadata `names` 解析（含带空格的 `'traffic light'`/`'hair drier'`、编号不连续、乱码回退 `class_N`）、
+   内置模型表的阈值选择（道闸 0.5 + 大框规则开；COCO 0.25 + 关）、表外模型的默认规则。
+7. `DetectorPipelineTest.cocoModelUsesCocoClassNames`：80 类模型端到端——类别数/类名/阈值来自模型，
+   通用图上检出的标签必须是 COCO 类（实测 `person 0.89 / person 0.80 / car 0.71 / backpack 0.67 / truck 0.58`），
+   **不得出现 `barrier_*`**（Task 2 发现的标签错位问题的回归）。
+8. `DetectorPipelineTest.barrierModelNeverOutputsCocoNames`：反向对照，道闸模型的输出标签必须是 `barrier_*`。
+
+测试资源：`app/src/test/resources/val/` 下 4 张 raw 图。其中 `cc_street.raw`（通用图，用于 COCO 回归）
+来源与许可：Wikimedia Commons《Nong'an Street intersection with pedestrians 20190517》，作者 Adam Jones（Flickr），
+许可 CC BY-SA 2.0，已按 640x480 缩放后转 raw。
 
 测试图放在 `app/src/test/resources/val/*.raw`，格式为 `[int width][int height][width*height 个 int ARGB]`（大端）。
 不用 JPG 是因为 Android 单元测试的引导类路径是 `android.jar`，其中没有 `java.awt` / `javax.imageio`。
@@ -237,3 +249,43 @@ crash_dump64  pid: 2889, tid: 2911, name: camera-capture
    原因是预览路径 CPU 开销大（YUV→RGB 720p + 2560x1600 位图缩放绘制），且 `onDraw` 与相机线程共用 `frameLock`。
    **该优化已明确不做**（2026-09 用户决定），如需提升流畅度可考虑：预览转换降到 640x360、改为 TextureView 双流、
    或为预览单独加锁。
+
+## 10. 模型切换（Task 3）
+
+### 10.1 UI 与行为
+
+1. 顶部右侧的 `Spinner` 列出 `app/src/main/assets` 下**所有 `.onnx`**（运行时枚举，加模型不用改代码）；
+   初始默认选择 `yolo26_barrier.onnx`（存在时）。
+2. 选中即切换：暂停投帧 → 加载新模型 → 成功后再关闭旧会话 → 一次性替换 `engine/letterboxer/detector`
+   引用 → 恢复切换前的检测开关状态。失败时**保留旧模型**并提示。
+3. 状态栏文案：`模型已就绪：<显示名>（N 类, conf X）`；检测框在切换瞬间清空。
+
+### 10.2 模型配置（`ModelProfile`，随模型变化的一切后处理参数）
+
+| 模型 | 显示名 | 类别数 | conf | IoU | maxDet | 大框低分规则 |
+|---|---|---|---|---|---|---|
+| `yolo26_barrier.onnx` | 道闸模型(3类) | 3 | 0.50 | 0.45 | 20 | 开 |
+| `yolo26n.onnx` | 通用模型(COCO 80类) | 80 | 0.25 | 0.45 | 30 | 关 |
+
+1. 类别数与候选数从输出形状推导（`nc = 通道数-4`、`anchors = 最后一维`），输入尺寸从输入形状推导（两模型都是 640）。
+2. 类名从 `getMetadata().getCustomMetadata().get("names")` 解析（正则 `(\d+)\s*:\s*'([^']*)'`，支持带空格类名），
+   解析不到回退 `class_N`。
+3. 表外模型走默认规则：类数 ≤10 → `conf 0.5`，否则 `conf 0.25`；**大框低分规则只对内置表内模型开启**
+   （实测把道闸模型的规则套到 COCO 上会误杀：人像图里 `bench 0.75`、框面积 68.8% 会被丢弃）。
+4. 配置不可变、不提供 setter：切换时构造新的 `Detector` 整体替换，避免「新类名 + 旧类别数/旧阈值」的中间态。
+
+### 10.3 线程安全
+
+模型切换任务提交到**推理用的同一个单线程池**，因此与 `run()` 天然串行；加载成功后才 `close()` 旧会话。
+推理任务里还带 `eng != engine` 的二次校验，丢弃上一代模型已排队的帧结果（旧会话可能已关闭，绝不能调 `run()`）。
+
+### 10.4 新增模型
+
+把 `.onnx` 丢进 `app/src/main/assets/`，重新构建即可：Spinner 自动列出它，类名/阈值按第 10.2 节的默认规则生效。
+若该模型需要特殊阈值或启用大框低分规则，在 `ModelProfile.TABLE` 里加一行即可。
+
+### 10.5 注意：ABI 与模拟器
+
+`app/build.gradle` 当前只打 `arm64-v8a`（真机）。**模拟器（x86_64）装不上**（`INSTALL_FAILED_NO_MATCHING_ABIS`）——
+需要模拟器验证时把该行改成 `abiFilters 'arm64-v8a', 'x86_64'`（Task 1 确认项 3 的原始组合）。
+`tools/verify-on-device.sh` 会依次验证：预览 → 开启检测 → 切换摄像头 → 切换模型，并检查 `logcat -b crash`。

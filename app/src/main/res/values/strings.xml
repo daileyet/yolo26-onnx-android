@@ -5,4 +5,5 @@
     <string name="detect_on">开启检测</string>
     <string name="detect_off">关闭检测</string>
     <string name="status_idle">初始化…</string>
+    <string name="model_switch">选择模型</string>
 </resources>

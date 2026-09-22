@@ -12,6 +12,12 @@
 
 ---
 
+## Task 3
+
+app界面 提供模型文件切换 `app\src\main\assets` 目前有两各模型文件
+
+`com.openthinks.onnx.example.Detector#CLASS_NAMES` 需要针对具体选择模型更新
+
 ## Task 2 [完成]
 
 `app\src\main\assets\yolo26_barrier.onnx` 是否支持通用物体检测

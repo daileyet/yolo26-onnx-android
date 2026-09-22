@@ -21,6 +21,17 @@
         android:textColor="@android:color/white"
         android:textSize="13sp" />
 
+    <Spinner
+        android:id="@+id/model_spinner"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_margin="12dp"
+        android:background="#80000000"
+        android:contentDescription="@string/model_switch"
+        android:popupBackground="#FFFFFFFF"
+        android:spinnerMode="dropdown" />
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

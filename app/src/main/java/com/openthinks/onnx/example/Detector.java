@@ -6,38 +6,26 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * YOLO26 detect 头输出的解码 + 按类 NMS。
+ * YOLO26 detect 头输出的解码 + 按类 NMS + 几何过滤。
  *
- * 模型契约（model/yolo26_barrier.onnx，实测）：
- *   输出 output0 = [1, 7, 8400]，其中 4 + NUM_CLASSES；
- *   - 通道 0..3：cx, cy, w, h —— 已经是解码后的中心式坐标，位于 640x640 letterbox 空间（像素）；
- *   - 通道 4..6：三个类别分数，图中已含 Sigmoid，取值 0~1；
+ * 模型契约（通用，实测覆盖 3 类道闸模型与 80 类 COCO 模型）：
+ *   输出 output0 = [1, 4 + nc, anchors]；
+ *   - 通道 0..3：cx, cy, w, h —— 已是解码后的中心式坐标，位于 letterbox 空间（像素）；
+ *   - 通道 4..(4+nc-1)：类别分数，图中已含 Sigmoid，取值 0~1；
  *   - 没有 objectness，也无需 DFL 解码（YOLO26 直回归头）。
+ *
+ * 配置（类名、类别数、候选数、阈值、是否启用几何过滤）全部来自 {@link ModelProfile}，
+ * 切换模型时构造新的 Detector 并整体替换引用 —— 避免「新类名 + 旧类别数/旧阈值」的半更新中间态。
  *
  * 纯 Java，无 Android 依赖，可在 JVM 单元测试中直接验证。
  */
 public final class Detector {
 
-    public static final String[] CLASS_NAMES = {"barrier_closed", "barrier_open", "barrier_raising"};
-
-    private static final int NUM_ANCHORS = 8400;
-    private static final int NUM_CLASSES = CLASS_NAMES.length;
-
-    /**
-     * 默认置信度阈值。实测依据（12 张通用图片作负样本、5 张 val 图作正样本）：
-     * 正样本命中分数 0.911~0.981；负样本最高分数 0.410（bus.jpg 整图误报）、0.354（室内图误报）。
-     * 取 0.5 可滤掉这两个误报，同时保留 0.41 的余量。
-     */
-    public static final float DEFAULT_CONF_THRESHOLD = 0.5f;
-    public static final float DEFAULT_NMS_IOU_THRESHOLD = 0.45f;
-    public static final int DEFAULT_MAX_DETECTIONS = 20;
-
-    /** 面积占整帧比例达到该值即视为“大框”。正样本最大命中框 49.1%，bus.jpg 误报框 61.7%。 */
+    /** 面积占整帧比例达到该值即视为“大框”。道闸模型正样本最大命中框 49.1%，bus.jpg 误报框 61.7%。 */
     private static final float BIG_BOX_AREA_RATIO = 0.5f;
 
-    /** 大框必须达到的置信度；否则认定为“整图猜测”并丢弃。正样本 5/5 命中分 >= 0.911，不受影响。 */
+    /** 大框必须达到的置信度；否则认定为“整图猜测”并丢弃（仅对内置表中开启该规则的模型生效）。 */
     private static final float BIG_BOX_MIN_SCORE = 0.7f;
-
 
     private static final Comparator<Detection> BY_SCORE_DESC = new Comparator<Detection>() {
         @Override
@@ -46,22 +34,37 @@ public final class Detector {
         }
     };
 
+    private final ModelProfile profile;
+    private final int numClasses;
+    private final int numAnchors;
+    private final int maxDetections;
+    private final String[] classNames;
     private final float confThreshold;
     private final float iouThreshold;
-    private final int maxDetections;
+    private final boolean bigBoxFilterEnabled;
 
-    public Detector() {
-        this(DEFAULT_CONF_THRESHOLD, DEFAULT_NMS_IOU_THRESHOLD, DEFAULT_MAX_DETECTIONS);
+    public Detector(ModelProfile profile) {
+        this.profile = profile;
+        this.numClasses = profile.numClasses;
+        this.numAnchors = profile.numAnchors;
+        this.maxDetections = profile.maxDetections;
+        this.classNames = profile.classNames;
+        this.confThreshold = profile.confThreshold;
+        this.iouThreshold = profile.iouThreshold;
+        this.bigBoxFilterEnabled = profile.bigBoxFilterEnabled;
     }
 
-    public Detector(float confThreshold, float iouThreshold, int maxDetections) {
-        this.confThreshold = confThreshold;
-        this.iouThreshold = iouThreshold;
-        this.maxDetections = maxDetections;
+    /** 道闸模型默认配置（等价于 Task 1 的行为，供旧用例与默认场景使用）。 */
+    public Detector() {
+        this(ModelProfile.barrierDefault());
+    }
+
+    public ModelProfile profile() {
+        return profile;
     }
 
     /**
-     * @param out   模型输出，形状 [1][4 + NUM_CLASSES][8400]
+     * @param out   模型输出，形状 [1][4 + nc][anchors]
      * @param scale Letterboxer 的缩放比
      * @param padX  Letterboxer 的水平填充
      * @param padY  Letterboxer 的垂直填充
@@ -72,10 +75,10 @@ public final class Detector {
     public List<Detection> detect(float[][][] out, float scale, float padX, float padY, int srcW, int srcH) {
         float[][] o = out[0];
         List<Detection> candidates = new ArrayList<>();
-        for (int i = 0; i < NUM_ANCHORS; i++) {
+        for (int i = 0; i < numAnchors; i++) {
             int bestClass = 0;
             float bestScore = o[4][i];
-            for (int c = 1; c < NUM_CLASSES; c++) {
+            for (int c = 1; c < numClasses; c++) {
                 float s = o[4 + c][i];
                 if (s > bestScore) {
                     bestScore = s;
@@ -85,18 +88,17 @@ public final class Detector {
             if (bestScore < confThreshold) {
                 continue;
             }
-            // 640x640 letterbox 空间 -> 原帧像素 -> 归一化
+            // letterbox 空间 -> 原帧像素 -> 归一化
             float cx = (o[0][i] - padX) / scale;
             float cy = (o[1][i] - padY) / scale;
-            float w = o[2][i] / scale;
-            float h = o[3][i] / scale;
-            float nw = w / srcW;
-            float nh = h / srcH;
+            float nw = o[2][i] / scale / srcW;
+            float nh = o[3][i] / scale / srcH;
             // 几何过滤：覆盖大半画面的框必须足够自信，否则视为“整图猜测”丢弃
-            if (nw * nh >= BIG_BOX_AREA_RATIO && bestScore < BIG_BOX_MIN_SCORE) {
+            if (bigBoxFilterEnabled && nw * nh >= BIG_BOX_AREA_RATIO && bestScore < BIG_BOX_MIN_SCORE) {
                 continue;
             }
-            candidates.add(new Detection(bestClass, bestScore, cx / srcW, cy / srcH, nw, nh));
+            String name = bestClass < classNames.length ? classNames[bestClass] : "class_" + bestClass;
+            candidates.add(new Detection(bestClass, name, bestScore, cx / srcW, cy / srcH, nw, nh));
         }
         return nms(candidates);
     }

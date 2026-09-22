@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Spinner 的条目/收起态样式：白底黑字，在深色预览上与白色下拉弹层上都清晰 -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/model_name"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="#E6FFFFFF"
+    android:paddingStart="12dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="12dp"
+    android:paddingBottom="8dp"
+    android:textColor="#FF000000"
+    android:textSize="13sp" />
