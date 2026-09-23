@@ -1,41 +1,88 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@android:color/black">
+    android:background="@android:color/black"
+    android:orientation="vertical">
 
-    <com.openthinks.onnx.example.CameraFrameView
-        android:id="@+id/camera_frame_view"
+    <!-- 预览：占屏高约 60%，画面等比居中绘制（高度不足只留黑边，不变形、不影响检测框对齐） -->
+    <FrameLayout
+        android:id="@+id/preview_container"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="0dp"
+        android:layout_weight="3">
 
-    <TextView
-        android:id="@+id/status_text"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top|start"
-        android:layout_margin="12dp"
-        android:background="#80000000"
-        android:padding="8dp"
-        android:text="@string/status_idle"
-        android:textColor="@android:color/white"
-        android:textSize="13sp" />
+        <com.openthinks.onnx.example.CameraFrameView
+            android:id="@+id/camera_frame_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
 
-    <Spinner
-        android:id="@+id/model_spinner"
-        android:layout_width="wrap_content"
+        <TextView
+            android:id="@+id/status_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|start"
+            android:layout_margin="12dp"
+            android:background="#80000000"
+            android:padding="8dp"
+            android:text="@string/status_idle"
+            android:textColor="@android:color/white"
+            android:textSize="13sp" />
+
+        <Spinner
+            android:id="@+id/model_spinner"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|end"
+            android:layout_margin="12dp"
+            android:background="#80000000"
+            android:contentDescription="@string/model_switch"
+            android:popupBackground="#FFFFFFFF"
+            android:spinnerMode="dropdown" />
+    </FrameLayout>
+
+    <!-- 检测日志头 -->
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="top|end"
-        android:layout_margin="12dp"
-        android:background="#80000000"
-        android:contentDescription="@string/model_switch"
-        android:popupBackground="#FFFFFFFF"
-        android:spinnerMode="dropdown" />
+        android:background="#CC101010"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="6dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/log_title"
+            android:textColor="@android:color/white"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/log_count"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/log_count_idle"
+            android:textColor="#FFB0B0B0"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- 检测日志：可上下滚动，行视图由 ListView 自动复用 -->
+    <ListView
+        android:id="@+id/detection_log"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="2"
+        android:background="#CC000000"
+        android:divider="#33FFFFFF"
+        android:dividerHeight="1dp"
+        android:scrollbars="vertical" />
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
         android:background="#80000000"
         android:orientation="horizontal"
         android:padding="12dp">
@@ -56,4 +103,4 @@
             android:text="@string/detect_on" />
     </LinearLayout>
 
-</FrameLayout>
+</LinearLayout>

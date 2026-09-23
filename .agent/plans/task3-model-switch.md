@@ -186,8 +186,8 @@ fields: String assetName, String displayName, int numClasses, String[] className
    但在这台软件渲染模拟器上 `am start -W` 首次启动耗时 24~34s（`failed to complete startup` 后重试才显示成功：
    `采集尺寸 1280x720`、`Displayed ... +34s`），按用户要求**放弃自动 UI 验证，改由用户手动验证**。
 
-### 8.3 待用户确认/处理
+### 8.3 决策记录
 
-1. `[待确认]` `app/build.gradle` 的 `abiFilters` 目前只有 `arm64-v8a`（用户手改），与 Task 1 确认项 3
-   （`arm64-v8a + x86_64`）不一致，且导致模拟器无法安装；若要在模拟器验证需恢复该组合。
-2. 用户手动验证通过后，把 `.agent/todo.md` 的 Task 3 标注 `[完成]`。
+1. 运行验证：**用户手动验证通过**（2026-09），Task 3 已标注 `[完成]`。
+2. ABI：保持 `app/build.gradle` 只打 `arm64-v8a`（面向真机、APK 更小），**不恢复** `x86_64`；
+   后续如需模拟器验证，用「工程副本改一行 ABI」的方式产出双 ABI APK（做法见 `README.md` 第 10.5 节）。

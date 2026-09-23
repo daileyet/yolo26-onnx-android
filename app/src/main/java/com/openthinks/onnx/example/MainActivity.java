@@ -12,12 +12,15 @@ import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.ListView;
 import android.widget.Spinner;
 import android.widget.TextView;
 
 import java.io.IOException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -52,11 +55,24 @@ public class MainActivity extends Activity implements CameraController.FrameList
     /** 默认优先选用的模型（存在则优先），否则用 assets 中排序后的第一个。 */
     private static final String PREFERRED_DEFAULT_MODEL = "yolo26_barrier.onnx";
 
+    /** 检测日志：最多保留行数与两行之间的最小间隔（行内容格式见 DetectionLogFormatter）。 */
+    private static final int LOG_MAX_LINES = 300;
+    private static final long LOG_MIN_INTERVAL_MS = 200L;
+
     private CameraFrameView frameView;
     private TextView statusView;
     private Button switchButton;
     private Button detectButton;
     private Spinner modelSpinner;
+    private ListView detectionLogView;
+    private TextView logCountView;
+
+    /** 检测日志（仅 UI 线程访问）：行文本、适配器与去重/节流状态。 */
+    private final List<String> detectionLogLines = new ArrayList<>();
+    private ArrayAdapter<String> detectionLogAdapter;
+    private final SimpleDateFormat logTimeFormat = new SimpleDateFormat("HH:mm:ss.SSS", Locale.ROOT);
+    private long lastLogTimestampMs;
+    private String lastLogSignature;
 
     private CameraController cameraController;
     private CameraImageConverter converter;
@@ -89,6 +105,11 @@ public class MainActivity extends Activity implements CameraController.FrameList
         switchButton = findViewById(R.id.switch_camera_button);
         detectButton = findViewById(R.id.detect_button);
         modelSpinner = findViewById(R.id.model_spinner);
+        detectionLogView = findViewById(R.id.detection_log);
+        logCountView = findViewById(R.id.log_count);
+        detectionLogAdapter = new ArrayAdapter<>(this, R.layout.item_detection_log,
+                R.id.log_line, detectionLogLines);
+        detectionLogView.setAdapter(detectionLogAdapter);
 
         converter = new CameraImageConverter();
         inferenceExecutor = Executors.newSingleThreadExecutor(r -> {
@@ -153,7 +174,6 @@ public class MainActivity extends Activity implements CameraController.FrameList
                 break;
             }
         }
-        modelSpinner.setSelection(defaultIndex, false);
         modelSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
@@ -167,6 +187,10 @@ public class MainActivity extends Activity implements CameraController.FrameList
                 // 无需处理
             }
         });
+        modelSpinner.setSelection(defaultIndex, false);
+        // Spinner 的初始选中不会触发 onItemSelected（首次布局判定为「选中项未变化」），
+        // 所以这里显式加载一次默认模型；若 Spinner 之后仍回调，switchModel 的守卫会去重。
+        switchModel(modelAssets[defaultIndex]);
     }
 
     /**
@@ -217,6 +241,7 @@ public class MainActivity extends Activity implements CameraController.FrameList
                 detectButton.setEnabled(true);
                 detecting = resumeDetecting;
                 updateDetectButton();
+                resetLogState();
                 setStatus("模型已就绪：" + profile.displayName + "（" + profile.numClasses
                         + " 类, conf " + profile.confThreshold + "）");
             });
@@ -305,6 +330,7 @@ public class MainActivity extends Activity implements CameraController.FrameList
         detecting = false;
         updateDetectButton();
         frameView.clearDetections();
+        resetLogState();
         cameraController.stop();
     }
 
@@ -332,6 +358,7 @@ public class MainActivity extends Activity implements CameraController.FrameList
         updateDetectButton();
         if (!detecting) {
             frameView.post(() -> frameView.clearDetections());
+            resetLogState();
             setStatus("检测已关闭");
         } else {
             setStatus("检测已开启");
@@ -408,7 +435,11 @@ public class MainActivity extends Activity implements CameraController.FrameList
             final List<Detection> result = detections;
             final float ms = SystemClock.uptimeMillis() - startMs;
             final float fps = previewFps;
-            uiHandler.post(() -> frameView.setDetections(result, ms, fps));
+            final String modelLabel = det.profile().displayName;
+            uiHandler.post(() -> {
+                frameView.setDetections(result, ms, fps);
+                appendDetectionLog(modelLabel, result, ms);
+            });
         } catch (Throwable t) {
             uiHandler.post(() -> {
                 frameView.clearDetections();
@@ -422,6 +453,37 @@ public class MainActivity extends Activity implements CameraController.FrameList
     @Override
     public void onCameraState(String message, boolean error) {
         uiHandler.post(() -> setStatus((error ? "[错误] " : "") + message));
+    }
+
+    /**
+     * 追加一行检测日志（仅 UI 线程调用）。
+     * 规则：无目标不写；内容与上一条相同不写；两条之间至少间隔 LOG_MIN_INTERVAL_MS；最多保留 LOG_MAX_LINES 行。
+     */
+    private void appendDetectionLog(String modelLabel, List<Detection> detections, float inferenceMs) {
+        if (detections.isEmpty()) {
+            return;
+        }
+        long now = SystemClock.uptimeMillis();
+        String body = DetectionLogFormatter.body(modelLabel, detections, inferenceMs);
+        if (body.equals(lastLogSignature) || now - lastLogTimestampMs < LOG_MIN_INTERVAL_MS) {
+            return;
+        }
+        lastLogSignature = body;
+        lastLogTimestampMs = now;
+
+        detectionLogLines.add(logTimeFormat.format(new Date()) + " | " + body);
+        while (detectionLogLines.size() > LOG_MAX_LINES) {
+            detectionLogLines.remove(0);
+        }
+        detectionLogAdapter.notifyDataSetChanged();
+        detectionLogView.setSelection(detectionLogLines.size() - 1);   // 始终滚动到最新一行
+        logCountView.setText(getString(R.string.log_count_format, detections.size()));
+    }
+
+    /** 重置日志去重状态：切换模型 / 关闭检测 / 停相机时调用，保证下一批结果能写入。 */
+    private void resetLogState() {
+        lastLogSignature = null;
+        lastLogTimestampMs = 0L;
     }
 
     private void setStatus(String message) {

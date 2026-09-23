@@ -134,6 +134,10 @@ $ANDROID_SDK_ROOT/emulator/emulator -avd Pixel_Tablet \
    通用图上检出的标签必须是 COCO 类（实测 `person 0.89 / person 0.80 / car 0.71 / backpack 0.67 / truck 0.58`），
    **不得出现 `barrier_*`**（Task 2 发现的标签错位问题的回归）。
 8. `DetectorPipelineTest.barrierModelNeverOutputsCocoNames`：反向对照，道闸模型的输出标签必须是 `barrier_*`。
+9. `LabelPaletteTest`：类别配色（黄金角色相）——同一 classId 色相恒定、落在 `[0,360)`、80 类两两最小色相间隔 >2°
+   （实测 2.94°；旧的 `classId % 3` 在这里间隔为 0）。
+10. `DetectionLogFormatterTest`：日志两行格式与类别聚合——同类合并保留最高分、按最高分降序、超 6 类截断并给出汇总，
+    并用 `estimatedColumns` 锁住行宽（head ≤64 列、典型目标行 ≤110 列、最坏 ≤150 列 = 3 行上限）。
 
 测试资源：`app/src/test/resources/val/` 下 4 张 raw 图。其中 `cc_street.raw`（通用图，用于 COCO 回归）
 来源与许可：Wikimedia Commons《Nong'an Street intersection with pedestrians 20190517》，作者 Adam Jones（Flickr），
@@ -255,7 +259,7 @@ crash_dump64  pid: 2889, tid: 2911, name: camera-capture
 ### 10.1 UI 与行为
 
 1. 顶部右侧的 `Spinner` 列出 `app/src/main/assets` 下**所有 `.onnx`**（运行时枚举，加模型不用改代码）；
-   初始默认选择 `yolo26_barrier.onnx`（存在时）。
+   初始默认选择 `yolo26_barrier.onnx`（存在时），并且**启动时立即加载该默认模型**（不依赖 Spinner 回调，见第 11.3 节）。
 2. 选中即切换：暂停投帧 → 加载新模型 → 成功后再关闭旧会话 → 一次性替换 `engine/letterboxer/detector`
    引用 → 恢复切换前的检测开关状态。失败时**保留旧模型**并提示。
 3. 状态栏文案：`模型已就绪：<显示名>（N 类, conf X）`；检测框在切换瞬间清空。
@@ -286,6 +290,71 @@ crash_dump64  pid: 2889, tid: 2911, name: camera-capture
 
 ### 10.5 注意：ABI 与模拟器
 
-`app/build.gradle` 当前只打 `arm64-v8a`（真机）。**模拟器（x86_64）装不上**（`INSTALL_FAILED_NO_MATCHING_ABIS`）——
-需要模拟器验证时把该行改成 `abiFilters 'arm64-v8a', 'x86_64'`（Task 1 确认项 3 的原始组合）。
+`app/build.gradle` **只打 `arm64-v8a`**（2026-09 决定，面向真机，APK 更小）。
+因此模拟器（x86_64）**装不上**（`INSTALL_FAILED_NO_MATCHING_ABIS`）。
+
+在模拟器上验证时的做法（不改动工程配置）：拷一份工程到临时目录，只把该行改成
+`abiFilters 'arm64-v8a', 'x86_64'`，用副本构建出的 APK 安装验证，例如：
+
+```bash
+rm -rf /tmp/emu-x86 && mkdir -p /tmp/emu-x86
+tar cf - --exclude=build --exclude=.gradle --exclude=.git . | (cd /tmp/emu-x86 && tar xf -)
+cd /tmp/emu-x86 && sed -i "s/abiFilters 'arm64-v8a'/abiFilters 'arm64-v8a', 'x86_64'/" app/build.gradle
+./gradlew :app:assembleDebug
+tools_abs=$(pwd)   # 用副本的 APK 跑仓库里的验证脚本
+cd - && ./tools/verify-on-device.sh /tmp/emu-x86/app/build/outputs/apk/debug/app-debug.apk
+```
+
 `tools/verify-on-device.sh` 会依次验证：预览 → 开启检测 → 切换摄像头 → 切换模型，并检查 `logcat -b crash`。
+模拟器是软件渲染，首次启动可能 20~30s，建议先执行
+`adb shell cmd package compile -m speed -f com.openthinks.onnx.example` 再启动。
+
+## 11. 界面结构与检测日志（Task 4）
+
+### 11.1 布局（垂直三段）
+
+1. 预览区 `FrameLayout`：`layout_weight=3`（约占屏高 60%），里面依次是 `CameraFrameView`、状态文字、模型下拉框。
+   预览按**宽度铺满**绘制、垂直方向居中裁切：缩放取 `min(max(W/cw, H/ch), min(W/cw, H/ch) × 1.4)`，
+   即铺满优先，但不超过「完整显示」的 1.4 倍（避免平板等极端比例下把画面裁到只剩中间一条）。
+   画面与检测框共用同一 `contentRect` 映射（允许为负/越界，超出 View 的部分由 Canvas 自动裁掉），
+   所以**框与画面始终对齐**。例：1080x2340 竖屏、预览区 1080x1404、帧 720x1280 → 缩放 1.5，
+   绘制 1080x1920，左右无黑边，垂直裁 516px（帧高 20%）；2560x1600 平板则被 1.4 倍上限拦住，保留黑边而不是裁掉 78%。
+2. 日志头 + 日志区：`ListView`（`layout_weight=2`），可上下滚动，行视图由 `ListView` 自动复用（`convertView`）。
+3. 底部按钮栏：切换摄像头 / 检测开关，位置与文案未变（验证脚本按文本查找，不受布局变化影响）。
+
+### 11.2 检测日志规则
+
+1. 行格式（**两行**，短屏也能显示完整；实现见 `DetectionLogFormatter`，纯 Java 可单测）：
+
+   ```
+   HH:mm:ss.SSS | <模型名> | 推理 Xms | N 个目标
+   person 0.89×3, car 0.71, truck 0.58, backpack 0.67  (共 4 类/7 个)
+   ```
+
+   第二行按类别聚合（同类只保留最高分 + 数量 `×N`，按最高分降序，最多列 6 类，超出显示 `…`）；
+   行视图等宽小字号并允许换行（`maxLines=3`）。实测列数：典型 COCO 7 目标为 head 42 列 / 目标行 68 列，
+   最坏情况（6 个最长 COCO 类名）目标行 127 列 —— 均在窄屏（11sp 等宽约 50~56 列/行）3 行内可完整显示。
+   （旧版单行格式为 72~131 列且 `singleLine` 强制省略号，必然显示不全。）
+2. 写入条件（任一不满足就跳过）：**有目标** + **内容与上一条不同** + 距上一条 **≥200ms**。
+   —— 无目标不写、静止画面不重复刷屏，避免日志把 UI 线程拖慢。
+3. 最多保留 **300 行**（超出删除最旧）；新增后自动滚动到最新一行；日志头右侧显示「当前 N 个目标」。
+4. 追加动作在 UI 线程（复用推理结果已有的 `Handler.post` 通道），不新增线程。
+
+### 11.3 启动时加载默认模型（修复「切走再切回才加载」）
+
+原实现是 `setSelection()` 先于 `setOnItemSelectedListener()` 调用：Spinner 在首次布局前被 `setSelection` 时
+只记录位置，首帧布局判定「选中项未变化」→ **不触发** `onItemSelected`，默认模型就一直不加载。
+现在改为：先注册监听 → 再 `setSelection` → **另外显式调用一次** `switchModel(默认模型)`，
+并用 `switchModel` 里已有的两个守卫（`assetName.equals(currentAsset) && engine != null`、`modelLoading`）去重。
+
+### 11.4 类别配色
+
+不再用 3 个固定颜色取模（`classId % 3`，COCO 80 类会撞色），改为按 classId 生成稳定色相：
+
+```
+hue = (classId × 137.508°) mod 360°        // 黄金角，LabelPalette.hueFor(classId)
+color = Color.HSVToColor({hue, 0.90, 0.95})
+```
+
+1. 同一 classId 的颜色跨帧恒定（便于追踪同一类目标）；80 类时两两最小色相间隔实测 **2.94°**（`LabelPaletteTest` 断言 >2°）。
+2. 框线用生成色，标签底色同色 + 白色文字 + 黑色阴影，保证在深色画面上的可读性。

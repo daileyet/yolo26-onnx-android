@@ -24,7 +24,11 @@ import java.util.List;
  */
 public class CameraFrameView extends View {
 
-    private static final int[] BOX_COLORS = {0xFFFF5252, 0xFF40C4FF, 0xFF69F0AE};
+    /**
+     * 缩放缓存的放大上限（相对「完整显示的等比缩放」）。用于「按宽度铺满」策略：
+     * 铺满优先，但裁切不超过该倍数，避免在平板等极端屏幕比例下把画面裁到只剩中间一条。
+     */
+    private static final float MAX_CROP_FACTOR = 1.4f;
 
     private final Object frameLock = new Object();
     private final Matrix bitmapMatrix = new Matrix();
@@ -103,12 +107,16 @@ public class CameraFrameView extends View {
         float ch = frameH;
         synchronized (frameLock) {
             if (frameBitmap != null && cw > 0 && ch > 0) {
-                float s = Math.min(getWidth() / cw, getHeight() / ch);
+                float fitScale = Math.min(getWidth() / cw, getHeight() / ch);
+                float fillScale = Math.max(getWidth() / cw, getHeight() / ch);
+                // 优先铺满（宽度方向铺满、垂直居中裁切），但裁切不超过 MAX_CROP_FACTOR 倍
+                float s = Math.min(fillScale, fitScale * MAX_CROP_FACTOR);
                 float dx = (getWidth() - cw * s) / 2f;
                 float dy = (getHeight() - ch * s) / 2f;
                 bitmapMatrix.setScale(s, s);
                 bitmapMatrix.postTranslate(dx, dy);
                 canvas.drawBitmap(frameBitmap, bitmapMatrix, bitmapPaint);
+                // contentRect 允许为负/越界（超出 View 的部分由 Canvas 自动裁掉），检测框与画面用同一映射
                 contentRect.set(dx, dy, dx + cw * s, dy + ch * s);
             } else {
                 contentRect.set(0f, 0f, getWidth(), getHeight());
@@ -116,7 +124,9 @@ public class CameraFrameView extends View {
         }
 
         for (Detection d : detections) {
-            int color = BOX_COLORS[d.classId % BOX_COLORS.length];
+            // 配色按 classId 生成（黄金角色相），类别数不受限：COCO 80 类也不会撞色
+            int color = Color.HSVToColor(new float[]{
+                    LabelPalette.hueFor(d.classId), LabelPalette.SATURATION, LabelPalette.VALUE});
             boxPaint.setColor(color);
             float left = contentRect.left + d.left() * contentRect.width();
             float top = contentRect.top + d.top() * contentRect.height();
