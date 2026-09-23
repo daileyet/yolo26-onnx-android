@@ -41,5 +41,3 @@ Thumbs.db
 # app/src/main/assets/yolo26_barrier.onnx   —— 构建必需，必须入库
 # app/src/test/resources/val/*.raw          —— 单元测试数据，必须入库
 # .agent/                                   —— todo 与 plan 文档，保留入库
-
-/model

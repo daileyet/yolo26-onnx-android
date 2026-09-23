@@ -38,7 +38,7 @@ import org.junit.Test;
  */
 public class DetectorPipelineTest {
 
-    /** 工作目录被 Gradle 设为仓库根目录（见 app/build.gradle）。assets 副本是仓库里唯一的模型文件。 */
+    /** 工作目录被 Gradle 设为仓库根目录（见 app/build.gradle）。这里加载的就是 App 发布用的模型文件。 */
     private static final File BARRIER_MODEL = new File("app/src/main/assets/yolo26_barrier.onnx");
     private static final File COCO_MODEL = new File("app/src/main/assets/yolo26n.onnx");
 

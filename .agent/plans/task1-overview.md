@@ -7,14 +7,14 @@
 1. 在仓库根目录（`<repo>`）下创建 Android Java 项目（非 Python 版本）。
 2. 主界面实时预览手机摄像头画面，支持前/后摄像头切换。
 3. 提供「检测」按钮，开启后在实时画面上叠加检测框（类别 + 置信度）。
-4. 推理基于已训练模型 `model/yolo26_barrier.onnx`，运行时用 ONNX Runtime Android，相机用 camera2 原生 API。
+4. 推理基于已训练模型 `app/src/main/assets/yolo26_barrier.onnx`，运行时用 ONNX Runtime Android，相机用 camera2 原生 API。
 5. 不在范围内：训练/量化、模型下载、云端推理、Python 侧脚本。
 
 ## 2. 可行性分析（含本机实测证据）
 
 ### 2.1 模型侧 [已验证]
 
-用本机 `onnxruntime 1.26.0` + `onnx` 直接读取 `model/yolo26_barrier.onnx` 得到的事实：
+用本机 `onnxruntime 1.26.0` + `onnx` 直接读取 `app/src/main/assets/yolo26_barrier.onnx` 得到的事实：
 
 1. 输入：`images`，形状 `[1, 3, 640, 640]`，`tensor(float)`。
 2. 输出：`output0`，形状 `[1, 7, 8400]`，`tensor(float)`；`4 (xywh) + 3 (类别分数)`。
@@ -74,7 +74,7 @@
     ├── build.gradle                    # namespace/compileSdk 34/abiFilters/依赖 ORT
     └── src/main/
         ├── AndroidManifest.xml         # CAMERA 权限、feature.camera、screenOrientation
-        ├── assets/yolo26_barrier.onnx  # 9.3 MB，从 model/ 复制
+        ├── assets/yolo26_barrier.onnx  # 9.3 MB
         ├── res/layout/activity_main.xml# TextureView + OverlayView + 控件栏
         └── java/com/example/barrierdet/
             ├── MainActivity.java        # 权限申请、相机启停、检测开关、摄像头切换

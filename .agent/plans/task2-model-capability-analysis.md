@@ -8,7 +8,7 @@
 
 ## 2. 证据一：模型契约与元数据（本机实测）
 
-用 ONNX Runtime 直接读取 `model/yolo26_barrier.onnx`：
+用 ONNX Runtime 直接读取 `app/src/main/assets/yolo26_barrier.onnx`：
 
 1. `inputInfo = images: FLOAT [1, 3, 640, 640]`；`outputInfo = output0: FLOAT [1, 7, 8400]`。
    7 = `4 (cx,cy,w,h) + 3 (类别分数)` —— 类别数由权重决定，无法在推理时“换成 80 类”。

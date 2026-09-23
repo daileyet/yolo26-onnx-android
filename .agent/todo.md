@@ -49,7 +49,7 @@ app界面 提供模型文件切换 `app\src\main\assets` 目前有两各模型�
 
 在当前目录创建Android Java项目, 用于演示利用手机摄像头实时进行目标检测.
 实现原理基于以下信息参考:
-1. yolo26已训练模型 `model\yolo26_barrier.onnx`
+1. yolo26已训练模型 `app/src/main/assets/yolo26_barrier.onnx`
 2. onnx android框架 `doc\research.md`
 3. camera2 原生api
 

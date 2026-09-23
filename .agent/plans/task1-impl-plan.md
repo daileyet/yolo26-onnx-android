@@ -10,7 +10,7 @@
 2. `<repo>/app/build.gradle`、`app/proguard-rules.pro`
 3. `<repo>/app/src/main/AndroidManifest.xml`
 4. `<repo>/app/src/main/res/layout/activity_main.xml`、`res/values/strings.xml`
-5. `<repo>/app/src/main/assets/yolo26_barrier.onnx`（由 `model/yolo26_barrier.onnx` 复制）
+5. `<repo>/app/src/main/assets/yolo26_barrier.onnx`（9.3 MB，Ultralytics YOLO26n，opset 12）
 6. `app/src/main/java/com/openthinks/onnx/example/` 下 9 个类：
    `MainActivity`、`CameraController`、`CameraImageConverter`、`RotationMapping`、`Letterboxer`、
    `OnnxInferenceEngine`、`Detector`、`Detection`、`CameraFrameView`
