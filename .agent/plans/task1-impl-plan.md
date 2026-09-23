@@ -6,16 +6,16 @@
 
 ## 1. 交付物清单
 
-1. `/export02/dad2szh/onnx_yolo26/settings.gradle`、`build.gradle`、`gradle.properties`、`local.properties`、`gradlew`、`gradle/wrapper/*`
-2. `/export02/dad2szh/onnx_yolo26/app/build.gradle`、`app/proguard-rules.pro`
-3. `/export02/dad2szh/onnx_yolo26/app/src/main/AndroidManifest.xml`
-4. `/export02/dad2szh/onnx_yolo26/app/src/main/res/layout/activity_main.xml`、`res/values/strings.xml`
-5. `/export02/dad2szh/onnx_yolo26/app/src/main/assets/yolo26_barrier.onnx`（由 `model/yolo26_barrier.onnx` 复制）
+1. `<repo>/settings.gradle`、`build.gradle`、`gradle.properties`、`local.properties`、`gradlew`、`gradle/wrapper/*`
+2. `<repo>/app/build.gradle`、`app/proguard-rules.pro`
+3. `<repo>/app/src/main/AndroidManifest.xml`
+4. `<repo>/app/src/main/res/layout/activity_main.xml`、`res/values/strings.xml`
+5. `<repo>/app/src/main/assets/yolo26_barrier.onnx`（由 `model/yolo26_barrier.onnx` 复制）
 6. `app/src/main/java/com/openthinks/onnx/example/` 下 9 个类：
    `MainActivity`、`CameraController`、`CameraImageConverter`、`RotationMapping`、`Letterboxer`、
    `OnnxInferenceEngine`、`Detector`、`Detection`、`CameraFrameView`
 7. `app/src/test/java/com/openthinks/onnx/example/DetectorPipelineTest.java`、`RotationMappingTest.java`、`app/src/test/resources/val/*`
-8. `/export02/dad2szh/onnx_yolo26/README.md`、`tools/verify-on-device.sh`
+8. `<repo>/README.md`、`tools/verify-on-device.sh`
 9. 本文档
 
 ## 2. 关键实现决策（含理由）
@@ -39,7 +39,7 @@
 ## 3. 构建与验证记录（本机实测）
 
 构建环境：JDK 21.0.12、Gradle 9.0.0（本机 wrapper 缓存）、AGP 8.9.1、compileSdk 34、build-tools 34.0.0、
-SDK `local.properties → sdk.dir=/export02/dad2szh/android/sdk`。
+SDK `local.properties → sdk.dir=<Android SDK 路径>`。
 
 1. `./gradlew :app:assembleDebug` → BUILD SUCCESSFUL，产出
    `app/build/outputs/apk/debug/app-debug.apk`（66.3MB），APK 内含
@@ -72,9 +72,9 @@ SDK `local.properties → sdk.dir=/export02/dad2szh/android/sdk`。
 
 模拟器路线（任选其一）：
 
-1. `sudo gpasswd -a dad2szh kvm` 后重新登录，再用
+1. `sudo gpasswd -a $USER kvm` 后重新登录，再用
    `$ANDROID_SDK_ROOT/emulator/emulator -avd Pixel_Tablet -camera-back virtualscene -camera-front emulated -no-snapshot`；
-2. 临时放开权限：`sudo setfacl -m u:dad2szh:rw /dev/kvm`（重启后失效）。
+2. 临时放开权限：`sudo setfacl -m u:$USER:rw /dev/kvm`（重启后失效）。
 
 ## 5. 风险与后续
 

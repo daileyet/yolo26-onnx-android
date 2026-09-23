@@ -1,7 +1,7 @@
 # 道闸检测 Demo（Android + camera2 + ONNX Runtime）
 
-手机摄像头实时目标检测 Demo：camera2 原生 API 采集 YUV 帧 → ONNX Runtime 跑 YOLO26 道闸检测模型 →
-在预览画面上叠加检测框。支持前/后摄像头切换与「开启/关闭检测」开关。
+手机摄像头实时目标检测 Demo：camera2 原生 API 采集 YUV 帧 → ONNX Runtime 跑 YOLO26 模型 → 在预览画面上叠加检测框。
+支持前/后摄像头切换、「开启/关闭检测」开关、**界面切换模型**（道闸 3 类 / COCO 80 类）、以及实时**检测日志框**。
 
 ## 1. 模型契约（不要随意改）
 
@@ -29,33 +29,43 @@
 │   └── src/
 │       ├── main/
 │       │   ├── AndroidManifest.xml      # CAMERA 权限、竖屏锁定
-│       │   ├── assets/yolo26_barrier.onnx
-│       │   ├── res/layout/activity_main.xml
+│       │   ├── assets/yolo26_barrier.onnx   # 道闸 3 类
+│       │   ├── assets/yolo26n.onnx          # COCO 80 类
+│       │   ├── res/layout/activity_main.xml        # 垂直三段：预览 / 日志 / 按钮栏
+│       │   ├── res/layout/item_model_spinner.xml   # 模型下拉框行
+│       │   ├── res/layout/item_detection_log.xml   # 日志行（等宽，maxLines=3 可换行）
+│       │   ├── res/values/strings.xml
 │       │   └── java/com/openthinks/onnx/example/
-│       │       ├── MainActivity.java          # 权限、开关、摄像头切换、帧分发
-│       │       ├── CameraController.java      # camera2 封装（ImageReader + 会话 + 旋转角）
-│       │       ├── CameraImageConverter.java  # YUV_420_888 -> 摆正后的 ARGB 整帧
-│       │       ├── RotationMapping.java       # 旋转坐标映射（纯 Java，可单测）
-│       │       ├── Letterboxer.java           # ARGB -> 640x640 NCHW float 张量（纯 Java，可单测）
-│       │       ├── OnnxInferenceEngine.java   # ORT 会话与推理（assets 加载 + 复用输入缓冲）
-│       │       ├── Detector.java              # 解码 + 按类 NMS（纯 Java，可单测）
-│       │       ├── Detection.java             # 检测结果（归一化中心式坐标）
-│       │       └── CameraFrameView.java       # 预览位图 + 检测框叠绘 + fps/耗时角标
+│       │       ├── MainActivity.java           # 权限、开关、摄像头/模型切换、帧分发、日志追加
+│       │       ├── CameraController.java       # camera2 封装（ImageReader + 会话 + 旋转角）
+│       │       ├── CameraImageConverter.java   # YUV_420_888 -> 摆正后的 ARGB 整帧
+│       │       ├── CameraFrameView.java        # 预览位图（铺满+裁切）+ 检测框叠绘 + fps/耗时角标
+│       │       ├── RotationMapping.java        # 旋转坐标映射（纯 Java，可单测）
+│       │       ├── Letterboxer.java            # ARGB -> NCHW float 张量（尺寸随模型，纯 Java，可单测）
+│       │       ├── OnnxInferenceEngine.java    # ORT 会话与推理（assets 加载 + 复用输入缓冲）
+│       │       ├── ModelProfile.java           # 模型配置：类名/类别数/阈值/输入尺寸（不可变）
+│       │       ├── Detector.java               # 解码 + 按类 NMS（纯 Java，可单测）
+│       │       ├── Detection.java              # 检测结果（归一化中心式坐标 + 类名）
+│       │       ├── LabelPalette.java           # 类别配色（黄金角色相，纯 Java，可单测）
+│       │       └── DetectionLogFormatter.java  # 日志两行文本 + 类别聚合（纯 Java，可单测）
 │       └── test/                              # JVM 单元测试（含真实模型 + 真实标注图）
 │           ├── java/.../DetectorPipelineTest.java
+│           ├── java/.../ModelProfileTest.java
 │           ├── java/.../RotationMappingTest.java
+│           ├── java/.../LabelPaletteTest.java
+│           ├── java/.../DetectionLogFormatterTest.java
 │           └── resources/val/*.raw|*.txt
 ├── model/yolo26_barrier.onnx            # 模型原始文件（assets 里的副本来自它）
 ├── doc/research.md                      # ONNX Runtime Android 用法参考
 ├── tools/verify-on-device.sh            # 真机/模拟器一键验证脚本
-└── .agent/plans/task1-*.md              # 可行性分析 + 实施计划
+└── .agent/plans/task1-*.md … task4-*.md # 可行性分析 + 各任务实施计划（task4-ui-optimizations.md 为界面/日志方案）
 ```
 
 ## 3. 构建
 
 ```bash
-cd /export02/dad2szh/onnx_yolo26
-./gradlew :app:assembleDebug          # 产出 app/build/outputs/apk/debug/app-debug.apk（约 66MB）
+cd "$(git rev-parse --show-toplevel)"   # 或在克隆下来的仓库根目录执行
+./gradlew :app:assembleDebug          # 产出 app/build/outputs/apk/debug/app-debug.apk（约 78MB，含 arm64-v8a + x86_64）
 ./gradlew :app:testDebugUnitTest      # JVM 单元测试（含真实模型推理）
 ```
 
@@ -81,6 +91,8 @@ CameraImageConverter ──► ARGB 整帧(摆正)  ──► CameraFrameView.up
                                                       │                  │
                                                       ▼                  ▼
                                             Detector.detect() ──► CameraFrameView.setDetections()
+                                                      │
+                                                      └─(UI 线程 Handler.post)─► 检测日志框(DetectionLogFormatter)
 ```
 
 1. 只用一路输出流（`ImageReader`），预览与检测共用同一份 ARGB 整帧：
@@ -107,6 +119,11 @@ tools/verify-on-device.sh
 2. 点「切换摄像头」后画面应变成另一路摄像头，且不黑屏；
 3. 点「开启检测」后画面上出现检测框 + 类别名 + 置信度，右上角显示 fps 与推理耗时；
 4. 点「关闭检测」后框消失，帧率应回升。
+5. **冷启动不做任何操作**，状态栏即出现「模型已就绪：道闸模型(3类)（3 类, conf 0.5）」（不需切走再切回）；
+6. 切到「通用模型(COCO 80类)」后，框标签变为 COCO 类名（`person/car/...`），不同类别颜色可区分；
+7. 日志区出现检测行（每条两行：`时间 | 模型 | 推理Xms | N 个目标` + 按类别聚合的目标行），
+   随画面滚动、静止画面不刷屏；日志区可上下滚动，最多 300 行；
+8. 预览区约占屏高 60%、画面左右无黑边（按宽度铺满、上下裁切），检测框与画面物体仍对齐。
 
 模拟器（`Pixel_Tablet`，`hw.camera.back=virtualscene`）需要 KVM：
 
@@ -139,6 +156,9 @@ $ANDROID_SDK_ROOT/emulator/emulator -avd Pixel_Tablet \
 10. `DetectionLogFormatterTest`：日志两行格式与类别聚合——同类合并保留最高分、按最高分降序、超 6 类截断并给出汇总，
     并用 `estimatedColumns` 锁住行宽（head ≤64 列、典型目标行 ≤110 列、最坏 ≤150 列 = 3 行上限）。
 
+当前总计 **23 项**（DetectorPipelineTest 7 + ModelProfileTest 7 + RotationMappingTest 2 + LabelPaletteTest 2 + DetectionLogFormatterTest 5），
+`./gradlew :app:assembleDebug :app:testDebugUnitTest` → `BUILD SUCCESSFUL`、0 失败。
+
 测试资源：`app/src/test/resources/val/` 下 4 张 raw 图。其中 `cc_street.raw`（通用图，用于 COCO 回归）
 来源与许可：Wikimedia Commons《Nong'an Street intersection with pedestrians 20190517》，作者 Adam Jones（Flickr），
 许可 CC BY-SA 2.0，已按 640x480 缩放后转 raw。
@@ -151,7 +171,7 @@ $ANDROID_SDK_ROOT/emulator/emulator -avd Pixel_Tablet \
 python3 - <<'EOF'
 import numpy as np, struct
 from PIL import Image
-src='/export02/dad2szh/yolo26_vision/datasets/barrier/images/val/'
+src='/path/to/datasets/barrier/images/val/'   # 训练集 val 目录（替换为你本机路径）
 dst='app/src/test/resources/val/'
 for name in ['img_0001','img_0004','img_0008']:
     im=Image.open(src+name+'.jpg').convert('RGB'); w,h=im.size
@@ -191,7 +211,8 @@ EOF
 1. 修复前：12 张负样本中 2 张出现误报框（`bus.jpg` 61.7%、室内图 13.1%）。
 2. 修复后：12 张负样本全部 0 个框；5 张正样本的类别、分数、IoU 与修复前完全一致。
 3. 单元测试：`DetectorPipelineTest.filtersLowConfidenceLargeBoxGuess` 覆盖该规则（大框低分丢弃 / 大框高分保留 /
-   小框中分保留 / 阈值边界 0.49 与 0.51），`./gradlew :app:testDebugUnitTest` 共 7 项全部通过。
+   小框中分保留 / 阈值边界 0.49 与 0.51）；当时 `./gradlew :app:testDebugUnitTest` 共 7 项通过
+   （当前测试总数与清单见第 6 节）。
 
 ## 9. 崩溃修复记录（SIGSEGV in camera-capture）
 
@@ -228,7 +249,8 @@ crash_dump64  pid: 2889, tid: 2911, name: camera-capture
 
 ### 9.4 复测
 
-1. `./gradlew :app:assembleDebug :app:testDebugUnitTest` → BUILD SUCCESSFUL，7 项单测 0 失败。
+1. `./gradlew :app:assembleDebug :app:testDebugUnitTest` → BUILD SUCCESSFUL，当时 7 项单测 0 失败
+   （当前 23 项，见第 6 节）。
 2. APK 已确认包含新代码（`classes3.dex` 中可检索到新日志字符串 `rowStride=`，APK 时间戳晚于源码修改时间）。
 3. 模拟器实测（`emulator-5554`，用户实例）：复现动作 = 连续切换摄像头 8 次 + 开启检测 + 检测态下再切换 4 次 +
    关闭检测，结果：
@@ -290,20 +312,14 @@ crash_dump64  pid: 2889, tid: 2911, name: camera-capture
 
 ### 10.5 注意：ABI 与模拟器
 
-`app/build.gradle` **只打 `arm64-v8a`**（2026-09 决定，面向真机，APK 更小）。
-因此模拟器（x86_64）**装不上**（`INSTALL_FAILED_NO_MATCHING_ABIS`）。
+`app/build.gradle` 当前打 **`arm64-v8a` + `x86_64`**（`x86_64` 用于模拟器验证；只面向真机时可切回
+`abiFilters 'arm64-v8a'`，文件里保留了注释掉的那一行），APK 约 78MB
+（ORT 的 `libonnxruntime.so` 很大，全 4 个 ABI 会到 108MB）。
 
-在模拟器上验证时的做法（不改动工程配置）：拷一份工程到临时目录，只把该行改成
-`abiFilters 'arm64-v8a', 'x86_64'`，用副本构建出的 APK 安装验证，例如：
-
-```bash
-rm -rf /tmp/emu-x86 && mkdir -p /tmp/emu-x86
-tar cf - --exclude=build --exclude=.gradle --exclude=.git . | (cd /tmp/emu-x86 && tar xf -)
-cd /tmp/emu-x86 && sed -i "s/abiFilters 'arm64-v8a'/abiFilters 'arm64-v8a', 'x86_64'/" app/build.gradle
-./gradlew :app:assembleDebug
-tools_abs=$(pwd)   # 用副本的 APK 跑仓库里的验证脚本
-cd - && ./tools/verify-on-device.sh /tmp/emu-x86/app/build/outputs/apk/debug/app-debug.apk
-```
+历史与备选做法：2026-09 曾一度只打 `arm64-v8a`，那时模拟器（x86_64）会 `INSTALL_FAILED_NO_MATCHING_ABIS`，
+需要在临时副本里改这一行再构建（`tar cf - --exclude=build --exclude=.gradle --exclude=.git .` 拷一份，
+`sed` 改 `abiFilters`，用副本 APK 跑 `tools/verify-on-device.sh <apk>`）。
+当前工程已含 x86_64，直接 `adb install -r -t app/build/outputs/apk/debug/app-debug.apk` 即可装到模拟器。
 
 `tools/verify-on-device.sh` 会依次验证：预览 → 开启检测 → 切换摄像头 → 切换模型，并检查 `logcat -b crash`。
 模拟器是软件渲染，首次启动可能 20~30s，建议先执行
@@ -358,3 +374,13 @@ color = Color.HSVToColor({hue, 0.90, 0.95})
 
 1. 同一 classId 的颜色跨帧恒定（便于追踪同一类目标）；80 类时两两最小色相间隔实测 **2.94°**（`LabelPaletteTest` 断言 >2°）。
 2. 框线用生成色，标签底色同色 + 白色文字 + 黑色阴影，保证在深色画面上的可读性。
+
+### 11.5 第二轮更新点（预览铺满 / 日志完整）
+
+1. 预览铺满由 `CameraFrameView.MAX_CROP_FACTOR = 1.4f` 控制：`fill` 铺满优先、上限 1.4 倍 `fit`；
+   各屏幕比例下的黑边/裁切实测数据（1080x2340、1440x3120、2560x1600）见
+   `.agent/plans/task4-ui-optimizations.md` 第 10.1 节。
+2. 日志「显示完整」的方案对比与列数实测（旧单行 72~131 列 vs 新两行 42/68 列）见同文件第 10.2 节；
+   实现为 `DetectionLogFormatter`（`estimatedColumns()` 可直接用于排查行宽）。
+3. 「点击日志行查看完整内容（对话框 + 复制）」经确认**不做**。
+4. 运行侧效果（黑边、可读性）属视觉项，由用户手工验证；构建侧以第 6 节的 23 项单测保证。

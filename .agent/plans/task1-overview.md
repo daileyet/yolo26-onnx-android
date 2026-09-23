@@ -4,7 +4,7 @@
 
 ## 1. 目标与范围
 
-1. 在当前目录 `/export02/dad2szh/onnx_yolo26` 下创建 Android Java 项目（非 Python 版本）。
+1. 在仓库根目录（`<repo>`）下创建 Android Java 项目（非 Python 版本）。
 2. 主界面实时预览手机摄像头画面，支持前/后摄像头切换。
 3. 提供「检测」按钮，开启后在实时画面上叠加检测框（类别 + 置信度）。
 4. 推理基于已训练模型 `model/yolo26_barrier.onnx`，运行时用 ONNX Runtime Android，相机用 camera2 原生 API。
@@ -23,7 +23,7 @@
 5. 图结构：输出前 `Sigmoid` 已作用于类别分数 → **无 objectness、类别分数已是概率**；框已解码为 `xywh(中心式, 640 像素空间)`，**没有 DFL 需要处理**。
 6. 图中输入侧第一个算子直接是 `Conv(images)`，**没有内建归一化** → 输入张量必须是 `0~255` 的原值再做 `/255`？实测结论见下一条。
 
-用 `/export02/dad2szh/yolo26_vision/datasets/barrier/images/val` 的 5 张真实验证图做端到端实测（脚本 `/tmp/t1/probe.py`，CPU 推理）：
+用 `<数据集根>/datasets/barrier/images/val` 的 5 张真实验证图做端到端实测（脚本 `/tmp/t1/probe.py`，CPU 推理）：
 
 | 预处理组合 | 结果 |
 |---|---|
@@ -50,7 +50,7 @@
 1. JDK：默认 `java 21.0.12`；`/usr/lib/jvm/` 另有 `java-8/17/21-openjdk-amd64` 可切换。AGP 8.9.1 在 JDK 21 下构建通过。
 2. Gradle：系统无 `gradle` 命令，但 `~/.gradle/wrapper/dists/gradle-9.0.0-bin/` 已缓存 Gradle **9.0.0** 发行包（无需联网下载发行包）。
 3. AGP 8.9.1 本机缓存已存在；`https://maven.aliyun.com/repository/google/com/android/tools/build/gradle/8.9.1/gradle-8.9.1.pom` 返回 200（`public` 仓库不代理 AGP，返回 404，所以 `google` 镜像必须保留）。
-4. Android SDK：`sdk.dir=/export02/dad2szh/android/sdk`，`platforms/android-34`、`platforms/android-36`、`build-tools/34.0.0`、`platform-tools`、`cmdline-tools/latest` 齐全 → `compileSdk 34` + `targetSdk 34` + `minSdk 24` 可用。
+4. Android SDK：`sdk.dir=<Android SDK 路径>`，`platforms/android-34`、`platforms/android-36`、`build-tools/34.0.0`、`platform-tools`、`cmdline-tools/latest` 齐全 → `compileSdk 34` + `targetSdk 34` + `minSdk 24` 可用。
 5. 实测结果：AGP 8.9.1 + Gradle 9.0.0 + `compileSdk 34` + `onnxruntime-android:1.26.0` → `BUILD SUCCESSFUL in 23s`，产出 108.4 MB debug APK（`/tmp/t1/agrtest/app/build/outputs/apk/debug/app-debug.apk`）。
 6. `build.gradle` 沿用 `.agent/todo.md` 给定的 aliyun 镜像 + `google()/mavenCentral()` 备份源配置即可，实测不报仓库解析错误。
 
@@ -64,11 +64,11 @@
 ### 3.1 工程结构
 
 ```
-/export02/dad2szh/onnx_yolo26/
+<repo>/
 ├── settings.gradle                     # pluginManagement 仓库 + include ':app'
 ├── build.gradle                        # todo.md 给定的 buildscript/allprojects 镜像配置 + AGP 8.9.1
 ├── gradle.properties                   # jvmargs / android.useAndroidX=true
-├── local.properties                    # sdk.dir=/export02/dad2szh/android/sdk（不入库）
+├── local.properties                    # sdk.dir=<Android SDK 路径>（不入库）
 ├── gradlew / gradlew.bat / gradle/wrapper/*   # 由缓存中的 Gradle 9.0.0 生成，distributionUrl=gradle-9.0.0-bin.zip
 └── app/
     ├── build.gradle                    # namespace/compileSdk 34/abiFilters/依赖 ORT

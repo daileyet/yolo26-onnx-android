@@ -4,14 +4,22 @@
 #   -> 点击「切换摄像头」-> 截图 -> 切换模型（下拉框选另一个模型）-> 截图 -> 检查 logcat 崩溃
 #
 # 用法: tools/verify-on-device.sh [apk路径]
-# 依赖: adb（ANDROID_SDK_ROOT 或 ANDROID_HOME 下的 platform-tools/adb）、python3
+# 依赖: adb（ANDROID_SDK_ROOT / ANDROID_HOME 下的 platform-tools/adb，或仓库 local.properties 的 sdk.dir）、python3
 #
 # 注意：需要 adb 能连到设备（真机，或已启用 KVM 的模拟器：sudo gpasswd -a $USER kvm 后重新登录）。
 
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/export02/dad2szh/android/sdk}}"
+# SDK 路径不写死本机路径：优先环境变量，其次仓库里的 local.properties（sdk.dir=...）
+SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+if [ -z "$SDK" ] && [ -f "$ROOT/local.properties" ]; then
+  SDK="$(sed -n 's/^sdk\.dir=//p' "$ROOT/local.properties" | head -n 1)"
+fi
+if [ -z "$SDK" ]; then
+  echo "[FAIL] 未找到 Android SDK：请设置 ANDROID_SDK_ROOT / ANDROID_HOME，或在 local.properties 里写 sdk.dir" >&2
+  exit 1
+fi
 ADB="${ADB:-$SDK/platform-tools/adb}"
 PKG="com.openthinks.onnx.example"
 APK="${1:-$ROOT/app/build/outputs/apk/debug/app-debug.apk}"
