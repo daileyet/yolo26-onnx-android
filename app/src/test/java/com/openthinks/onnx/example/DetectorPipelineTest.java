@@ -38,8 +38,8 @@ import org.junit.Test;
  */
 public class DetectorPipelineTest {
 
-    /** 工作目录被 Gradle 设为仓库根目录（见 app/build.gradle）。 */
-    private static final File BARRIER_MODEL = new File("model/yolo26_barrier.onnx");
+    /** 工作目录被 Gradle 设为仓库根目录（见 app/build.gradle）。assets 副本是仓库里唯一的模型文件。 */
+    private static final File BARRIER_MODEL = new File("app/src/main/assets/yolo26_barrier.onnx");
     private static final File COCO_MODEL = new File("app/src/main/assets/yolo26n.onnx");
 
     /** img_0001=barrier_closed, img_0004=barrier_raising, img_0008=barrier_open，三个类别各覆盖一张。 */

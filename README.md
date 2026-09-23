@@ -5,7 +5,9 @@
 
 ## 1. 模型契约（不要随意改）
 
-模型：`app/src/main/assets/yolo26_barrier.onnx`（源文件 `model/yolo26_barrier.onnx`，Ultralytics YOLO26n，opset 12，9.3MB）
+模型：`app/src/main/assets/yolo26_barrier.onnx`（Ultralytics YOLO26n，opset 12，9.3MB）。
+仓库里**只有这一份**：根目录 `model/` 原始件已删除（2026-09，它从未入库），assets 副本是唯一来源，
+其 metadata `description` 已脱敏（见第 12 节）。
 
 1. 输入 `images`：`[1, 3, 640, 640]`，`float32`，**RGB + NCHW**，并且**必须 /255.0 归一化到 0~1**。
    实测：直接送 0~255 原值会输出上百个 score=1.0 的垃圾框（框位全部错误）。
@@ -55,7 +57,6 @@
 │           ├── java/.../LabelPaletteTest.java
 │           ├── java/.../DetectionLogFormatterTest.java
 │           └── resources/val/*.raw|*.txt
-├── model/yolo26_barrier.onnx            # 模型原始文件（assets 里的副本来自它）
 ├── doc/research.md                      # ONNX Runtime Android 用法参考
 ├── tools/verify-on-device.sh            # 真机/模拟器一键验证脚本
 └── .agent/plans/task1-*.md … task4-*.md # 可行性分析 + 各任务实施计划（task4-ui-optimizations.md 为界面/日志方案）
@@ -113,6 +114,9 @@ tools/verify-on-device.sh
 脚本会：安装 APK → 授予 CAMERA 权限 → 启动 App → 截图（预览）→ 点击「开启检测」→ 再截图 →
 抓 logcat 中的 `FATAL/AndroidRuntime` → 输出截图路径。
 
+脚本本身不写死任何本机路径：SDK 优先取 `ANDROID_SDK_ROOT` / `ANDROID_HOME`，都没有时读仓库 `local.properties`
+的 `sdk.dir`，两者都取不到会直接报错退出。
+
 手工验证要点：
 
 1. 预览是否正常出图（不是全黑、不是花屏、方向正确）；
@@ -159,6 +163,10 @@ $ANDROID_SDK_ROOT/emulator/emulator -avd Pixel_Tablet \
 当前总计 **23 项**（DetectorPipelineTest 7 + ModelProfileTest 7 + RotationMappingTest 2 + LabelPaletteTest 2 + DetectionLogFormatterTest 5），
 `./gradlew :app:assembleDebug :app:testDebugUnitTest` → `BUILD SUCCESSFUL`、0 失败。
 
+注意：道闸相关用例**直接加载 `app/src/main/assets/yolo26_barrier.onnx`**（与 App 发布的是同一份文件），
+COCO 用例加载 `app/src/main/assets/yolo26n.onnx` —— 发布资产被单测覆盖（文件缺失、类名解析异常都会直接失败）。
+改资产后请用 `--rerun`（或先删 `app/build/test-results/`）确认测试真的重跑了，Gradle 常报 `UP-TO-DATE` 跳过。
+
 测试资源：`app/src/test/resources/val/` 下 4 张 raw 图。其中 `cc_street.raw`（通用图，用于 COCO 回归）
 来源与许可：Wikimedia Commons《Nong'an Street intersection with pedestrians 20190517》，作者 Adam Jones（Flickr），
 许可 CC BY-SA 2.0，已按 640x480 缩放后转 raw。
@@ -191,6 +199,9 @@ EOF
 4. 未启用 NNAPI，走 CPU（`setIntraOpNumThreads(2)`）；如需加速可加 `options.addNnapi()`，
    但要留意部分算子在 NNAPI 上回退反而更慢。
 5. APK 只含 `arm64-v8a` + `x86_64` 两个 ABI（ORT 的 `libonnxruntime.so` 很大，全 ABI 会到 108MB）。
+6. 单元测试直接加载 `app/src/main/assets/` 下的两个模型（发布副本即被测文件），因此改资产会被单测覆盖；
+   但 Gradle 可能报 `UP-TO-DATE` 而不重跑测试，改资产后请加 `--rerun` 确认。二进制改写（如第 12 节的脱敏）
+   仍建议用 ORT 真加载核验一次，避免「结构损坏但恰好没被断言命中」。
 
 ## 8. 误报抑制规则（阈值取值依据）
 
@@ -384,3 +395,29 @@ color = Color.HSVToColor({hue, 0.90, 0.95})
    实现为 `DetectionLogFormatter`（`estimatedColumns()` 可直接用于排查行宽）。
 3. 「点击日志行查看完整内容（对话框 + 复制）」经确认**不做**。
 4. 运行侧效果（黑边、可读性）属视觉项，由用户手工验证；构建侧以第 6 节的 23 项单测保证。
+
+## 12. 模型资产脱敏（assets 副本）与二进制改动的取证方法
+
+`app/src/main/assets/yolo26_barrier.onnx` 的 metadata `description` 原本写死了训练机信息
+（内部主机名 + 用户目录 + 工程路径，形如 `\\<主机名>\home_<用户>\codes\<工程>\datasets\barrier\data.yaml`），
+而该字符串会随 assets **打进每个 APK**。2026-09 已把 description 改为中性文本
+`Ultralytics YOLO26n model trained on datasets/barrier/data.yaml`（9794820 → 9794752 字节）。
+根目录 `model/` 原始件随后被删除（它从未入库），所以**现在仓库里只有 assets 这一份模型**，
+`DetectorPipelineTest` 也改为直接加载它 —— 改动该资产会被单测覆盖（但记得 `--rerun`）。
+
+同时 `tools/verify-on-device.sh` 与文档也做了脱敏：脚本不再写死 SDK 路径，文档里的仓库/SDK/数据集路径
+统一写成 `<repo>` / `<Android SDK 路径>` 之类的占位符。
+
+改二进制模型资产的正确姿势（本项目踩过坑，务必照做）：
+
+1. ONNX 是 protobuf，`metadata_props` 条目有**两层长度前缀**：
+   `0x72 <varint entry_len>` 包住 `0x0A <varint key_len> key` + `0x12 <varint val_len> value`。
+   只改内层 `val_len` 会破坏文件，ORT 直接报 `ORT_INVALID_PROTOBUF ... Protobuf parsing failed`；
+   而当次**单测仍然全绿**（当时测试加载的是尚未改动的 `model/` 那份），所以"测试通过"在这里毫无意义。
+2. 长度缩短后 varint 字节数可能变化（entry 145→79 字节时，外层 varint 由 2 字节变 1 字节），要重新编码，
+   不能原地改字节。
+3. 改前必须留备份，并且**唯一可信的验证是 ORT 真加载**：能 `createSession`、
+   `getMetadata().getCustomMetadata()` 的键集合不变、`names` 内容正确、跑一次推理输出仍是 `[1, 7, 8400]`；
+   之后再 `assembleDebug`，**从 APK 里解出 `assets/` 再加载一次**（打包链路也可能引入差异）。
+4. 单测现在直接加载这份 assets 副本（`DetectorPipelineTest.BARRIER_MODEL`），文件缺失或类名解析失败会立刻报错；
+   但 **Gradle 可能报 `UP-TO-DATE` 不重跑测试**——改资产后请加 `--rerun`（或先删 `app/build/test-results/`）确认。

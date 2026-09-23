@@ -40,7 +40,7 @@ configurations.matching { it.name in ['testCompileClasspath', 'testRuntimeClassp
     exclude group: 'com.microsoft.onnxruntime', module: 'onnxruntime-android'
 }
 
-// 单元测试工作目录设为仓库根目录，便于按相对路径读取 model/yolo26_barrier.onnx
+// 单元测试工作目录设为仓库根目录，便于按相对路径读取 app/src/main/assets/yolo26_barrier.onnx
 tasks.withType(Test).configureEach {
     workingDir = rootProject.projectDir
     testLogging {
