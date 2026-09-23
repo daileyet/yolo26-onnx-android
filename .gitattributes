@@ -1,0 +1,18 @@
+# 行尾策略
+# 仓库统一按 LF 存储（索引里永远是 LF），检出时按下面的规则决定工作区行尾。
+# 这样无论本机 core.autocrlf 怎么设，clone 后的行尾都是一致的。
+* text=auto eol=lf
+
+# 以下文件由 Windows 风格编辑器维护，检出保持 CRLF（避免整文件 diff 噪音）
+.agent/todo.md                        text eol=crlf
+doc/research.md                       text eol=crlf
+app/src/test/resources/val/*.txt       text eol=crlf
+gradlew.bat                           text eol=crlf
+
+# 二进制资产：禁止任何行尾/编码转换（否则会破坏文件）
+*.onnx      binary
+*.raw       binary
+*.apk       binary
+*.jar       binary
+*.png       binary
+*.jpg       binary
