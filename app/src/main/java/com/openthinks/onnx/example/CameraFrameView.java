@@ -25,10 +25,11 @@ import java.util.List;
 public class CameraFrameView extends View {
 
     /**
-     * 缩放缓存的放大上限（相对「完整显示的等比缩放」）。用于「按宽度铺满」策略：
-     * 铺满优先，但裁切不超过该倍数，避免在平板等极端屏幕比例下把画面裁到只剩中间一条。
+     * 缩放策略：`s = min(fillScale, fitScale × MAX_CROP_FACTOR)`。
+     * 1.0 = 等比**完整显示**（不裁切，画面不足的一边留黑边）；>1.0 = 允许裁切以换取铺满。
+     * 当前需求（Task 5）要求「显示完整」，故取 1.0；此前为铺满宽度取 1.4（会裁掉约 1/4 帧高）。
      */
-    private static final float MAX_CROP_FACTOR = 1.4f;
+    private static final float MAX_CROP_FACTOR = 1.0f;
 
     private final Object frameLock = new Object();
     private final Matrix bitmapMatrix = new Matrix();
@@ -109,7 +110,7 @@ public class CameraFrameView extends View {
             if (frameBitmap != null && cw > 0 && ch > 0) {
                 float fitScale = Math.min(getWidth() / cw, getHeight() / ch);
                 float fillScale = Math.max(getWidth() / cw, getHeight() / ch);
-                // 优先铺满（宽度方向铺满、垂直居中裁切），但裁切不超过 MAX_CROP_FACTOR 倍
+                // 等比完整显示（MAX_CROP_FACTOR = 1.0 时 s = fitScale，画面完整、不足的一边留黑边）
                 float s = Math.min(fillScale, fitScale * MAX_CROP_FACTOR);
                 float dx = (getWidth() - cw * s) / 2f;
                 float dy = (getHeight() - ch * s) / 2f;
