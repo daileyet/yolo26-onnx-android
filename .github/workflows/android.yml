@@ -3,16 +3,20 @@ name: Android CI
 on:
   push:
     branches: [ "github" ]
+    tags:     [ "v*.*.*" ]     # 推送 v 开头的 tag 时触发发布
   pull_request:
     branches: [ "github" ]
 
+permissions:
+  contents: write              # 关键：创建 Release 必须的写权限
+
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
+
     - name: set up JDK 17
       uses: actions/setup-java@v4
       with:
@@ -22,5 +26,17 @@ jobs:
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
-    - name: Build with Gradle
-      run: ./gradlew build
+
+    - name: Build release APK
+      run: ./gradlew assembleRelease    # 用 assembleRelease 而不是 build，产物更明确
+
+    # 只在 tag push 时执行发布
+    - name: Release
+      uses: softprops/action-gh-release@v3
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: app/build/outputs/apk/release/*.apk
+        generate_release_notes: true     # 自动根据提交生成 release notes
+        # body: "手动填写的更新说明（可选）"
+        # draft: false
+        # prerelease: false
