@@ -34,6 +34,14 @@ android {
     }
 }
 
+// 产物重命名：debug 与 release 统一叫 yolo26-onnx-example.apk（两者在不同目录，互不冲突）。
+// 说明：AGP 8.9 的新变体 API（com.android.build.api.variant.VariantOutput）只能改 versionCode/versionName，
+//       没有 outputFileName 入口，因此只能用 legacy 的 applicationVariants；该 API 在 AGP 9 会被移除，
+//       升级 AGP 时需重新评估（届时可退化为构建后改名任务或由 CI 改名）。
+android.applicationVariants.all { variant ->
+    variant.outputs.all { outputFileName = 'yolo26-onnx-example.apk' }
+}
+
 // 单元测试跑在 JVM 上，必须排除 android aar（其自带 native 库不能在 JVM 加载），
 // 改用同版本 onnxruntime 主机版 jar，二者 java API 完全一致。
 configurations.matching { it.name in ['testCompileClasspath', 'testRuntimeClasspath'] }.configureEach {

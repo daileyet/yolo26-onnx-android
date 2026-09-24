@@ -65,9 +65,15 @@
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"   # 或在克隆下来的仓库根目录执行
-./gradlew :app:assembleDebug          # 产出 app/build/outputs/apk/debug/app-debug.apk（约 78MB，含 arm64-v8a + x86_64）
+./gradlew :app:assembleDebug          # -> app/build/outputs/apk/debug/yolo26-onnx-example.apk（约 43MB，当前只含 arm64-v8a）
+./gradlew :app:assembleRelease        # -> app/build/outputs/apk/release/yolo26-onnx-example.apk（未签名，安装前需自行签名）
 ./gradlew :app:testDebugUnitTest      # JVM 单元测试（含真实模型推理）
 ```
+
+**产物名两个变体统一为 `yolo26-onnx-example.apk`**（AGP 默认的 `app-debug.apk` / `app-release-unsigned.apk` 已被覆盖）：
+在 `app/build.gradle` 里用 legacy 的 `android.applicationVariants.all { outputs.all { outputFileName = ... } }` 实现 ——
+AGP 8.9 的新变体 API（`com.android.build.api.variant.VariantOutput`）只有 versionCode/versionName，**没有 `outputFileName` 入口**；
+该 legacy API 在 AGP 9 会移除，升级 AGP 时需迁移。CI（`.github/workflows/android.yml`）用 `release/*.apk` 通配上传，改名不影响它。
 
 环境（本机已验证）：
 
@@ -197,10 +203,14 @@ EOF
 3. Activity 锁定竖屏（`android:screenOrientation="portrait"`），旋转逻辑仍按通用公式实现。
 4. 未启用 NNAPI，走 CPU（`setIntraOpNumThreads(2)`）；如需加速可加 `options.addNnapi()`，
    但要留意部分算子在 NNAPI 上回退反而更慢。
-5. APK 只含 `arm64-v8a` + `x86_64` 两个 ABI（ORT 的 `libonnxruntime.so` 很大，全 ABI 会到 108MB）。
+5. APK 当前只含 `arm64-v8a`（`abiFilters` 里保留了放开 x86_64 的注释行；放开后约 78MB）。
+   ORT 的 `libonnxruntime.so` 很大，不裁 ABI 会到 108MB。
 6. 单元测试直接加载 `app/src/main/assets/` 下的两个模型（即发布用的模型文件），因此改资产会被单测覆盖；
    但 Gradle 可能报 `UP-TO-DATE` 而不重跑测试，改资产后请加 `--rerun` 确认。二进制改写（如第 12 节的脱敏）
    仍建议用 ORT 真加载核验一次，避免「结构损坏但恰好没被断言命中」。
+7. `release` 产物**未配置签名**，但文件名已统一为 `yolo26-onnx-example.apk`（不再带 `-unsigned` 提示）；
+   直接 `adb install` 会报 `INSTALL_PARSE_FAILED_NO_CERTIFICATES`，发布/安装前需先 `apksigner` 签名，
+   或直接用 debug 包做功能验证。
 
 ## 8. 误报抑制规则（阈值取值依据）
 
@@ -322,14 +332,17 @@ crash_dump64  pid: 2889, tid: 2911, name: camera-capture
 
 ### 10.5 注意：ABI 与模拟器
 
-`app/build.gradle` 当前打 **`arm64-v8a` + `x86_64`**（`x86_64` 用于模拟器验证；只面向真机时可切回
-`abiFilters 'arm64-v8a'`，文件里保留了注释掉的那一行），APK 约 78MB
-（ORT 的 `libonnxruntime.so` 很大，全 4 个 ABI 会到 108MB）。
+`app/build.gradle` 当前只打 **`arm64-v8a`**（面向真机、APK 更小，约 43MB）。要在 x86_64 模拟器上跑，
+把 `ndk.abiFilters` 放开成 `abiFilters 'arm64-v8a', 'x86_64'`（文件里保留了注释行；放开后约 78MB），
+或拷一份工程到临时目录只改这一行再构建：
+`tar cf - --exclude=build --exclude=.gradle --exclude=.git .` 拷一份 → `sed` 改 `abiFilters` →
+用副本 APK 跑 `tools/verify-on-device.sh <apk>`。否则模拟器会报 `INSTALL_FAILED_NO_MATCHING_ABIS`。
 
-历史与备选做法：2026-09 曾一度只打 `arm64-v8a`，那时模拟器（x86_64）会 `INSTALL_FAILED_NO_MATCHING_ABIS`，
-需要在临时副本里改这一行再构建（`tar cf - --exclude=build --exclude=.gradle --exclude=.git .` 拷一份，
-`sed` 改 `abiFilters`，用副本 APK 跑 `tools/verify-on-device.sh <apk>`）。
-当前工程已含 x86_64，直接 `adb install -r -t app/build/outputs/apk/debug/app-debug.apk` 即可装到模拟器。
+产物名统一为 `yolo26-onnx-example.apk`（见第 3 节），装到模拟器/真机：
+
+```bash
+adb install -r -t app/build/outputs/apk/debug/yolo26-onnx-example.apk
+```
 
 `tools/verify-on-device.sh` 会依次验证：预览 → 开启检测 → 切换摄像头 → 切换模型，并检查 `logcat -b crash`。
 模拟器是软件渲染，首次启动可能 20~30s，建议先执行

@@ -12,7 +12,11 @@
 
 ---
 
-## Task 5
+## Task 6
+
+build的apk名字 命名为 yolo26-onnx-example.apk, debug和release都一样
+
+## Task 5 [完成]
 
 摄像头预览位图与检测框的view 显示的图像有剪裁 不能显示完整 调整能显示完整
 

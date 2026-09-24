@@ -22,7 +22,7 @@ if [ -z "$SDK" ]; then
 fi
 ADB="${ADB:-$SDK/platform-tools/adb}"
 PKG="com.openthinks.onnx.example"
-APK="${1:-$ROOT/app/build/outputs/apk/debug/app-debug.apk}"
+APK="${1:-$ROOT/app/build/outputs/apk/debug/yolo26-onnx-example.apk}"
 OUT="${OUT_DIR:-$ROOT/build/verify}"
 mkdir -p "$OUT"
 
