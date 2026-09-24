@@ -30,6 +30,13 @@ jobs:
     - name: Build release APK
       run: ./gradlew assembleRelease    # 用 assembleRelease 而不是 build，产物更明确
 
+    # 可选：无论是否发版，每次构建都保留 APK 供下载调试
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-release
+        path: app/build/outputs/apk/release/*.apk
+
     # 只在 tag push 时执行发布
     - name: Release
       uses: softprops/action-gh-release@v3
